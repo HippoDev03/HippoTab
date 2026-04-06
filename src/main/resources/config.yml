@@ -12,5 +12,5 @@ tab:
 sorting:
   enabled: true
   rank-placeholder: "%vaultunlocked_weight%"
-  descending: true
+  descending: false
   default-rank: 0
