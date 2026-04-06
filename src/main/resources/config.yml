@@ -14,3 +14,30 @@ sorting:
   rank-placeholder: "%vaultunlocked_weight%"
   descending: false
   default-rank: 0
+
+nametag:
+  enabled: true
+  # Update interval in ticks (20 ticks = 1 second)
+  update-interval-ticks: 40
+  # Prefix shows BEFORE the player name
+  # Example: "%vaultunlocked_prefix%", "<gold>[VIP] ", "<gradient:#FF0000:#00FF00>%player_rank%</gradient> "
+  # Player name color uses the LAST color token found in this prefix.
+  prefix: "%vaultunlocked_prefix%"
+  # Suffix shows AFTER the player name
+  # Suffix text does not control the player name color.
+  suffix: ""
+  # Optional: disable in specific conditions
+  # Examples: "world=lobby" or "%arena%=['beast','diamond']" or "world=pvp;%game_mode%=['survival']"
+  disable-if: ""
+
+belowname:
+  enabled: true
+  # Update interval in ticks (20 ticks = 1 second)
+  update-interval-ticks: 20
+  # Label shown before the value
+  format: "<red>❤"
+  # The value to display (supports placeholders)
+  # Examples: "%player_health%", "%player_level%", "%statistic_player_kills%"
+  value: "%player_health%"
+  # Optional: disable in specific conditions
+  disable-if: ""

@@ -27,4 +27,8 @@ public final class TabTextFormatter {
             .collect(Collectors.joining("\n"));
         return miniMessage.deserialize(LegacyColorTranslator.toMiniMessage(joined));
     }
+
+    public PlaceholderService getPlaceholderService() {
+        return placeholderService;
+    }
 }

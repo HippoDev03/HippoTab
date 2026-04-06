@@ -2,8 +2,8 @@ name: HippoTab
 version: '$version'
 
 main: net.mwtw.hippoTab.Core
-api-version: '1.21.11'
-load: STARTUP
+api-version: '1.21'
+load: POSTWORLD
 softdepend: [PlaceholderAPI, Vault, VaultUnlocked]
 
 commands:
