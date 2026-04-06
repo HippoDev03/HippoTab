@@ -1,0 +1,18 @@
+name: HippoTab
+version: '$version'
+
+main: net.mwtw.hippoTab.Core
+api-version: '1.21.11'
+load: STARTUP
+softdepend: [PlaceholderAPI, Vault, VaultUnlocked]
+
+commands:
+  hippotab:
+    description: Main command for HippoTab
+    usage: /<command> reload
+    aliases: [htab]
+
+permissions:
+  hippotab.reload:
+    description: Allows reloading HippoTab configuration
+    default: op

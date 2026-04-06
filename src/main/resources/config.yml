@@ -1,0 +1,16 @@
+update-interval-ticks: 40
+
+tab:
+  header:
+    - "<gradient:#63d471:#233329><bold>Hippo Network</bold></gradient>"
+    - "&7Welcome, &f%player_name%"
+  footer:
+    - "&7Online: &f%server_online%"
+    - "&7Store: <yellow>store.example.com</yellow>"
+  player-list-name: "%vaultunlocked_prefix% &f%player_name%"
+
+sorting:
+  enabled: true
+  rank-placeholder: "%vaultunlocked_weight%"
+  descending: true
+  default-rank: 0

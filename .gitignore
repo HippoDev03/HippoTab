@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+
+# Gradle
+.gradle/
+build/
+out/
+
+# Runtime/test server data
+run/
+
+# IDE
+.idea/
+*.iml
+.vscode/
