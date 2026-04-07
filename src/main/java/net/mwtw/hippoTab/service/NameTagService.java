@@ -75,9 +75,13 @@ public final class NameTagService {
         }
 
         Team team = getOrCreateTeam(player);
-        
+
+        String resolvedPrefix = formatter.toMiniMessageText(player, config.nametagPrefix());
+        NamedTextColor prefixColor = parseNamedColor(resolvedPrefix);
+        String visiblePrefix = stripTrailingNameColorTokens(resolvedPrefix);
+
         // Build prefix and suffix components
-        Component prefix = formatter.toComponent(player, config.nametagPrefix());
+        Component prefix = formatter.fromMiniMessage(visiblePrefix);
         Component suffix = formatter.toComponent(player, config.nametagSuffix());
         
         team.prefix(prefix);
@@ -87,8 +91,6 @@ public final class NameTagService {
         // Priority: 1) Last color from prefix, 2) WHITE fallback
         NamedTextColor teamColor = null;
         
-        // First try to extract the last color token from the resolved prefix text
-        NamedTextColor prefixColor = parseNamedColor(player, config.nametagPrefix());
         if (prefixColor != null) {
             teamColor = prefixColor;
         }
@@ -111,27 +113,31 @@ public final class NameTagService {
     }
 
     public String getFormattedName(Player player) {
-        String prefix = formatter.getPlaceholderService().apply(player, config.nametagPrefix());
+        String prefix = getVisiblePrefixText(player);
         String suffix = formatter.getPlaceholderService().apply(player, config.nametagSuffix());
         return prefix + player.getName() + suffix;
     }
 
     public String getFormattedPrefix(Player player) {
-        return formatter.getPlaceholderService().apply(player, config.nametagPrefix());
+        return getVisiblePrefixText(player);
     }
 
     public String getFormattedSuffix(Player player) {
         return formatter.getPlaceholderService().apply(player, config.nametagSuffix());
     }
 
-    private NamedTextColor parseNamedColor(Player player, String input) {
-        // Apply placeholders first
-        String processed = formatter.getPlaceholderService().apply(player, input);
+    private String getVisiblePrefixText(Player player) {
+        String resolvedPrefix = formatter.toMiniMessageText(player, config.nametagPrefix());
+        return stripTrailingNameColorTokens(resolvedPrefix);
+    }
+
+    private NamedTextColor parseNamedColor(String processed) {
         NamedTextColor lastColor = null;
 
         for (int i = 0; i < processed.length(); i++) {
             char current = processed.charAt(i);
 
+            // Parse MiniMessage-style colors first (these come from PAPI or converted legacy codes)
             if (current == '<') {
                 int end = processed.indexOf('>', i + 1);
                 if (end < 0) {
@@ -156,7 +162,7 @@ public final class NameTagService {
 
             char code = Character.toLowerCase(processed.charAt(i + 1));
 
-            // &#RRGGBB or §#RRGGBB
+            // &#RRGGBB or §#RRGGBB (parse these before legacy codes)
             if (code == '#' && i + 7 < processed.length()) {
                 String hex = processed.substring(i + 2, i + 8);
                 if (isHexColor(hex)) {
@@ -166,7 +172,7 @@ public final class NameTagService {
                 }
             }
 
-            // &x&F&F&0&0&0&0 / §x§F§F§0§0§0§0
+            // &x&F&F&0&0&0&0 / §x§F§F§0§0§0§0 (parse these before legacy codes)
             if (code == 'x' && i + 13 < processed.length()) {
                 StringBuilder hex = new StringBuilder(6);
                 boolean valid = true;
@@ -190,6 +196,7 @@ public final class NameTagService {
                 }
             }
 
+            // Legacy color codes (parsed last)
             NamedTextColor legacyColor = getLegacyColor(code);
             if (legacyColor != null) {
                 lastColor = legacyColor;
@@ -197,7 +204,84 @@ public final class NameTagService {
             }
         }
 
+        String trailingHex = extractTrailingRawHexToken(processed);
+        if (trailingHex != null) {
+            lastColor = findNearestNamedColor(trailingHex);
+        }
+
         return lastColor;
+    }
+
+    // Removes trailing color-only markers used to color the player name (e.g. "<#29A3DB>", "<red>", "&c").
+    private String stripTrailingNameColorTokens(String input) {
+        String value = input;
+        while (true) {
+            int end = value.length();
+            while (end > 0 && Character.isWhitespace(value.charAt(end - 1))) {
+                end--;
+            }
+            if (end == 0) {
+                return value;
+            }
+
+            boolean removed = false;
+
+            if (value.charAt(end - 1) == '>') {
+                int start = value.lastIndexOf('<', end - 1);
+                if (start >= 0) {
+                    String token = value.substring(start + 1, end).trim();
+                    if (isMiniMessageColorToken(token)) {
+                        value = value.substring(0, start) + value.substring(end);
+                        removed = true;
+                    }
+                }
+            }
+
+            if (!removed && end >= 2) {
+                char marker = value.charAt(end - 2);
+                char code = Character.toLowerCase(value.charAt(end - 1));
+                if ((marker == '&' || marker == '§') && getLegacyColor(code) != null) {
+                    value = value.substring(0, end - 2) + value.substring(end);
+                    removed = true;
+                }
+            }
+
+            if (!removed) {
+                int start = trailingLegacyHexStart(value);
+                if (start >= 0) {
+                    value = value.substring(0, start);
+                    removed = true;
+                }
+            }
+
+            if (!removed) {
+                String trailingHex = extractTrailingRawHexToken(value);
+                if (trailingHex != null) {
+                    int start = trailingRawHexStart(value);
+                    if (start >= 0) {
+                        value = value.substring(0, start);
+                        removed = true;
+                    }
+                }
+            }
+
+            if (!removed) {
+                return value;
+            }
+        }
+    }
+
+    private boolean isMiniMessageColorToken(String token) {
+        if (token.isEmpty() || token.charAt(0) == '/') {
+            return false;
+        }
+        if (token.equalsIgnoreCase("reset")) {
+            return true;
+        }
+        if (token.charAt(0) == '#' && token.length() == 7 && isHexColor(token.substring(1))) {
+            return true;
+        }
+        return NamedTextColor.NAMES.value(token) != null;
     }
 
     private boolean isHexColor(String value) {
@@ -216,6 +300,92 @@ public final class NameTagService {
         return (character >= '0' && character <= '9')
             || (character >= 'a' && character <= 'f')
             || (character >= 'A' && character <= 'F');
+    }
+
+    private String extractTrailingRawHexToken(String value) {
+        int start = trailingRawHexStart(value);
+        if (start < 0) {
+            return null;
+        }
+        String token = value.substring(start).trim();
+        if (token.startsWith("#")) {
+            token = token.substring(1);
+        }
+        return isHexColor(token) ? token : null;
+    }
+
+    private int trailingRawHexStart(String value) {
+        int end = value.length();
+        while (end > 0 && Character.isWhitespace(value.charAt(end - 1))) {
+            end--;
+        }
+        if (end == 0) {
+            return -1;
+        }
+
+        int start = end;
+        while (start > 0) {
+            char c = value.charAt(start - 1);
+            if (Character.isWhitespace(c)) {
+                break;
+            }
+            start--;
+        }
+
+        String token = value.substring(start, end).trim();
+        String normalized = token.startsWith("#") ? token.substring(1) : token;
+        if (!isHexColor(normalized)) {
+            return -1;
+        }
+        return start;
+    }
+
+    private int trailingLegacyHexStart(String value) {
+        int end = trimmedEnd(value);
+        if (end == 0) {
+            return -1;
+        }
+
+        int start = Math.max(0, end - 8);
+        if (end - start == 8) {
+            char marker = value.charAt(start);
+            char type = value.charAt(start + 1);
+            if ((marker == '&' || marker == '§') && type == '#') {
+                String hex = value.substring(start + 2, end);
+                if (isHexColor(hex)) {
+                    return start;
+                }
+            }
+        }
+
+        start = Math.max(0, end - 14);
+        if (end - start == 14) {
+            char marker = value.charAt(start);
+            char type = Character.toLowerCase(value.charAt(start + 1));
+            if ((marker == '&' || marker == '§') && type == 'x' && isLegacySplitHex(value, start, marker)) {
+                return start;
+            }
+        }
+
+        return -1;
+    }
+
+    private int trimmedEnd(String value) {
+        int end = value.length();
+        while (end > 0 && Character.isWhitespace(value.charAt(end - 1))) {
+            end--;
+        }
+        return end;
+    }
+
+    private boolean isLegacySplitHex(String value, int start, char marker) {
+        for (int idx = 0; idx < 6; idx++) {
+            int markerIndex = start + 2 + (idx * 2);
+            if (value.charAt(markerIndex) != marker || !isHexChar(value.charAt(markerIndex + 1))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private NamedTextColor findNearestNamedColor(String hex) {

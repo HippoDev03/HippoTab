@@ -3,7 +3,7 @@ package net.mwtw.hippoTab.text;
 import java.util.HashMap;
 import java.util.Map;
 
-final class LegacyColorTranslator {
+public final class LegacyColorTranslator {
     private static final Map<Character, String> LEGACY_TO_MINI = new HashMap<>();
 
     static {
@@ -34,7 +34,7 @@ final class LegacyColorTranslator {
     private LegacyColorTranslator() {
     }
 
-    static String toMiniMessage(String input) {
+    public static String toMiniMessage(String input) {
         StringBuilder out = new StringBuilder(input.length() + 16);
 
         for (int i = 0; i < input.length(); i++) {
@@ -47,7 +47,7 @@ final class LegacyColorTranslator {
             char prefix = current;
             char code = Character.toLowerCase(input.charAt(i + 1));
 
-            if (code == '#' && i + 8 < input.length()) {
+            if (code == '#' && i + 7 < input.length()) {
                 String hex = input.substring(i + 2, i + 8);
                 if (hex.matches("[A-Fa-f0-9]{6}")) {
                     out.append("<#").append(hex).append(">");
