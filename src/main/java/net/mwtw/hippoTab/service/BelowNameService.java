@@ -117,7 +117,9 @@ public final class BelowNameService {
             return;
         }
 
-        if (!conditionParser.evaluate(player, config.belownameDisableIf())) {
+        if (config.belownameDisableIf() != null
+            && !config.belownameDisableIf().isBlank()
+            && conditionParser.evaluate(player, config.belownameDisableIf())) {
             objective.getScore(player).resetScore();
             return;
         }

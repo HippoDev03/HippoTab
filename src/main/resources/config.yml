@@ -17,6 +17,10 @@ sorting:
 
 nametag:
   enabled: true
+  # When false, HippoTab will never add/remove players to scoreboard teams.
+  # This avoids client crashes caused by team packet desync, but nametags only
+  # work for players already assigned to this plugin's team.
+  auto-assign-team: true
   # Update interval in ticks (20 ticks = 1 second)
   update-interval-ticks: 40
   # Prefix shows BEFORE the player name
@@ -41,3 +45,8 @@ belowname:
   value: "%player_health%"
   # Optional: disable in specific conditions
   disable-if: ""
+
+debug:
+  # Logs every outgoing HippoTab team packet seen by PacketEvents.
+  # Use this to verify whether the client is still being sent ht_* remove packets.
+  client-team-packets: false

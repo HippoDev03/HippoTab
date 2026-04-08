@@ -11,6 +11,9 @@ import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.scoreboard.Scoreboard;
 import org.bukkit.scoreboard.Team;
 
+import java.util.HashSet;
+import java.util.Set;
+
 public final class NameTagService {
     private final JavaPlugin plugin;
     private final TabConfig config;
@@ -37,7 +40,8 @@ public final class NameTagService {
         if (!config.nametagEnabled()) {
             return;
         }
-        
+
+        pruneUnusedTeams();
         updateAll();
         updateTask = Bukkit.getScheduler().runTaskTimer(
             plugin,
@@ -74,7 +78,22 @@ public final class NameTagService {
             return;
         }
 
-        Team team = getOrCreateTeam(player);
+        Team currentTeam = getScoreboard().getEntityTeam(player);
+        Team team = getScoreboard().getTeam(getTeamName(player));
+
+        if (currentTeam != null && currentTeam != team) {
+            if (!config.nametagAutoAssignTeam() || !isHippoTeam(currentTeam)) {
+                return;
+            }
+            team = currentTeam;
+        }
+
+        if (team == null) {
+            if (!config.nametagAutoAssignTeam()) {
+                return;
+            }
+            team = getOrCreateTeam(player);
+        }
 
         String resolvedPrefix = formatter.toMiniMessageText(player, config.nametagPrefix());
         NamedTextColor prefixColor = parseNamedColor(resolvedPrefix);
@@ -108,6 +127,9 @@ public final class NameTagService {
         
         // Only send an add when the scoreboard is not already mapped to this team.
         if (!isCurrentTeamMember(team, player)) {
+            if (!config.nametagAutoAssignTeam()) {
+                return;
+            }
             team.addEntity(player);
         }
     }
@@ -447,8 +469,8 @@ public final class NameTagService {
     public void removePlayer(Player player) {
         Scoreboard sb = getScoreboard();
         Team team = sb.getTeam(getTeamName(player));
-        if (team != null && isCurrentTeamMember(team, player)) {
-            team.removeEntity(player);
+        if (team != null) {
+            resetTeamAppearance(team);
         }
         // Reset custom name
         player.customName(null);
@@ -460,9 +482,7 @@ public final class NameTagService {
         Scoreboard sb = getScoreboard();
         Team team = sb.getTeam(teamName);
         if (team != null) {
-            team.prefix(Component.empty());
-            team.suffix(Component.empty());
-            team.color(NamedTextColor.WHITE);
+            resetTeamAppearance(team);
         }
         // Reset custom name
         player.customName(null);
@@ -483,14 +503,44 @@ public final class NameTagService {
         return "ht_" + player.getUniqueId().toString().substring(0, 12);
     }
 
+    private boolean isHippoTeam(Team team) {
+        return team.getName().startsWith("ht_");
+    }
+
+    // Keep the player bound to their dedicated team to avoid client crashes when the
+    // client scoreboard state is temporarily out of sync with the server removal packet.
+    private void resetTeamAppearance(Team team) {
+        team.prefix(Component.empty());
+        team.suffix(Component.empty());
+        team.color(NamedTextColor.WHITE);
+    }
+
     private boolean isCurrentTeamMember(Team team, Player player) {
         return getScoreboard().getEntityTeam(player) == team;
     }
 
     public void cleanup() {
         stop();
+    }
+
+    public void pruneUnusedTeams() {
+        Scoreboard sb = getScoreboard();
+        Set<String> preservedTeams = new HashSet<>();
+
         for (Player player : Bukkit.getOnlinePlayers()) {
-            removePlayer(player);
+            preservedTeams.add(getTeamName(player));
+
+            Team currentTeam = sb.getEntityTeam(player);
+            if (currentTeam != null && isHippoTeam(currentTeam)) {
+                preservedTeams.add(currentTeam.getName());
+            }
+        }
+
+        for (Team team : sb.getTeams()) {
+            if (!isHippoTeam(team) || preservedTeams.contains(team.getName())) {
+                continue;
+            }
+            team.unregister();
         }
     }
 }

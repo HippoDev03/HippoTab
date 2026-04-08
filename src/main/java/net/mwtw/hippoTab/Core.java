@@ -15,15 +15,21 @@ public final class Core extends JavaPlugin {
     private BelowNameService belowNameService;
     private PlaceholderService placeholderService;
     private ConditionParser conditionParser;
+    private ClientTeamStateService clientTeamStateService;
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
         placeholderService = new PlaceholderService(this);
         conditionParser = new ConditionParser(placeholderService);
+        clientTeamStateService = new ClientTeamStateService(this);
+        clientTeamStateService.start();
         reloadPluginState();
 
-        Bukkit.getPluginManager().registerEvents(new PlayerConnectionListener(tabService, nameTagService, belowNameService), this);
+        Bukkit.getPluginManager().registerEvents(
+            new PlayerConnectionListener(tabService, nameTagService, belowNameService, clientTeamStateService),
+            this
+        );
 
         PluginCommand command = getCommand("hippotab");
         if (command == null) {
@@ -44,6 +50,9 @@ public final class Core extends JavaPlugin {
         }
         if (belowNameService != null) {
             belowNameService.stop();
+        }
+        if (clientTeamStateService != null) {
+            clientTeamStateService.stop();
         }
         if (placeholderService != null) {
             placeholderService.unregister();

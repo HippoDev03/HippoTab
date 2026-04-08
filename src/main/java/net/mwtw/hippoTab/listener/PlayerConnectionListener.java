@@ -1,6 +1,7 @@
 package net.mwtw.hippoTab.listener;
 
 import net.mwtw.hippoTab.service.BelowNameService;
+import net.mwtw.hippoTab.service.ClientTeamStateService;
 import net.mwtw.hippoTab.service.NameTagService;
 import net.mwtw.hippoTab.service.TabService;
 import org.bukkit.event.EventHandler;
@@ -12,15 +13,21 @@ public final class PlayerConnectionListener implements Listener {
     private final TabService tabService;
     private final NameTagService nameTagService;
     private final BelowNameService belowNameService;
+    private final ClientTeamStateService clientTeamStateService;
 
-    public PlayerConnectionListener(TabService tabService, NameTagService nameTagService, BelowNameService belowNameService) {
+    public PlayerConnectionListener(TabService tabService,
+                                    NameTagService nameTagService,
+                                    BelowNameService belowNameService,
+                                    ClientTeamStateService clientTeamStateService) {
         this.tabService = tabService;
         this.nameTagService = nameTagService;
         this.belowNameService = belowNameService;
+        this.clientTeamStateService = clientTeamStateService;
     }
 
     @EventHandler
     public void onPlayerJoin(PlayerJoinEvent event) {
+        clientTeamStateService.clearAndPrepareReassign(event.getPlayer());
         tabService.refreshPlayer(event.getPlayer());
         tabService.applySorting();
         nameTagService.updatePlayer(event.getPlayer());

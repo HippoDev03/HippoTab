@@ -15,6 +15,7 @@ public record TabConfig(
     boolean sortingDescending,
     int defaultRank,
     boolean nametagEnabled,
+    boolean nametagAutoAssignTeam,
     long nametagUpdateIntervalTicks,
     String nametagPrefix,
     String nametagSuffix,
@@ -39,6 +40,7 @@ public record TabConfig(
         int defaultRank = config.getInt("sorting.default-rank", 0);
 
         boolean nametagEnabled = config.getBoolean("nametag.enabled", true);
+        boolean nametagAutoAssignTeam = config.getBoolean("nametag.auto-assign-team", false);
         long nametagUpdateIntervalTicks = Math.max(1L, config.getLong("nametag.update-interval-ticks", 40L));
         String nametagPrefix = config.getString("nametag.prefix", "%vaultunlocked_prefix%");
         String nametagSuffix = config.getString("nametag.suffix", "");
@@ -60,6 +62,7 @@ public record TabConfig(
             sortingDescending,
             defaultRank,
             nametagEnabled,
+            nametagAutoAssignTeam,
             nametagUpdateIntervalTicks,
             nametagPrefix,
             nametagSuffix,
