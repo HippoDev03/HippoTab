@@ -1,9 +1,12 @@
 package net.mwtw.hippoTab.config;
 
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public record TabConfig(
     long updateIntervalTicks,
@@ -24,7 +27,8 @@ public record TabConfig(
     long belownameUpdateIntervalTicks,
     String belownameFormat,
     String belownameValue,
-    String belownameDisableIf
+    String belownameDisableIf,
+    Map<String, ConditionalPlaceholderConfig> conditionalPlaceholders
 ) {
     public static TabConfig from(JavaPlugin plugin) {
         FileConfiguration config = plugin.getConfig();
@@ -51,7 +55,6 @@ public record TabConfig(
         String belownameFormat = config.getString("belowname.format", "<red>❤");
         String belownameValue = config.getString("belowname.value", "%player_health%");
         String belownameDisableIf = config.getString("belowname.disable-if", "");
-
         return new TabConfig(
             updateIntervalTicks,
             headerLines,
@@ -71,7 +74,55 @@ public record TabConfig(
             belownameUpdateIntervalTicks,
             belownameFormat,
             belownameValue,
-            belownameDisableIf
+            belownameDisableIf,
+            Map.of()
         );
+    }
+
+    public TabConfig withConditionalPlaceholders(ConfigurationSection config) {
+        return new TabConfig(
+            updateIntervalTicks,
+            headerLines,
+            footerLines,
+            playerListNameFormat,
+            sortingEnabled,
+            rankPlaceholder,
+            sortingDescending,
+            defaultRank,
+            nametagEnabled,
+            nametagAutoAssignTeam,
+            nametagUpdateIntervalTicks,
+            nametagPrefix,
+            nametagSuffix,
+            nametagDisableIf,
+            belownameEnabled,
+            belownameUpdateIntervalTicks,
+            belownameFormat,
+            belownameValue,
+            belownameDisableIf,
+            loadConditionalPlaceholders(config)
+        );
+    }
+
+    private static Map<String, ConditionalPlaceholderConfig> loadConditionalPlaceholders(ConfigurationSection config) {
+        Map<String, ConditionalPlaceholderConfig> placeholders = new LinkedHashMap<>();
+
+        for (String key : config.getKeys(false)) {
+            if (!config.isConfigurationSection(key)) {
+                continue;
+            }
+
+            var section = config.getConfigurationSection(key);
+            if (section == null) {
+                continue;
+            }
+
+            ConditionalPlaceholderConfig conditionalPlaceholder = ConditionalPlaceholderConfig.from(section);
+            if (conditionalPlaceholder.isValid()) {
+                placeholders.put(key, conditionalPlaceholder);
+            }
+        }
+
+        return Map.copyOf(placeholders);
     }
 }

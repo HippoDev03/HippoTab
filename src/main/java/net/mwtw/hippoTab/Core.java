@@ -7,7 +7,10 @@ import net.mwtw.hippoTab.service.*;
 import net.mwtw.hippoTab.text.TabTextFormatter;
 import org.bukkit.Bukkit;
 import org.bukkit.command.PluginCommand;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
+
+import java.io.File;
 
 public final class Core extends JavaPlugin {
     private TabService tabService;
@@ -20,6 +23,7 @@ public final class Core extends JavaPlugin {
     @Override
     public void onEnable() {
         saveDefaultConfig();
+        saveResource("conditional-placeholders.yml", false);
         placeholderService = new PlaceholderService(this);
         conditionParser = new ConditionParser(placeholderService);
         clientTeamStateService = new ClientTeamStateService(this);
@@ -72,13 +76,14 @@ public final class Core extends JavaPlugin {
             belowNameService.stop();
         }
 
-        TabConfig tabConfig = TabConfig.from(this);
+        TabConfig tabConfig = TabConfig.from(this).withConditionalPlaceholders(loadConditionalPlaceholderConfig());
         TabTextFormatter formatter = new TabTextFormatter(placeholderService);
         
         tabService = new TabService(this, tabConfig, formatter, placeholderService);
         nameTagService = new NameTagService(this, tabConfig, formatter, conditionParser);
         belowNameService = new BelowNameService(this, tabConfig, formatter, placeholderService, conditionParser);
-        
+
+        placeholderService.setConditionalPlaceholders(tabConfig.conditionalPlaceholders());
         tabService.setNameTagService(nameTagService);
         tabService.setBelowNameService(belowNameService);
         placeholderService.setNameTagService(nameTagService);
@@ -86,5 +91,10 @@ public final class Core extends JavaPlugin {
         nameTagService.start();
         belowNameService.start();
         tabService.start();
+    }
+
+    private YamlConfiguration loadConditionalPlaceholderConfig() {
+        File file = new File(getDataFolder(), "conditional-placeholders.yml");
+        return YamlConfiguration.loadConfiguration(file);
     }
 }

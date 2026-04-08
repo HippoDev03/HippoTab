@@ -2,14 +2,19 @@ package net.mwtw.hippoTab.service;
 
 import me.clip.placeholderapi.PlaceholderAPI;
 import me.clip.placeholderapi.expansion.PlaceholderExpansion;
+import net.mwtw.hippoTab.config.ConditionalPlaceholderConfig;
+import net.mwtw.hippoTab.config.ConditionalPlaceholderRule;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.NotNull;
 
+import java.util.Map;
+
 public final class PlaceholderService {
     private final JavaPlugin plugin;
     private HippoTabExpansion expansion;
+    private Map<String, ConditionalPlaceholderConfig> conditionalPlaceholders = Map.of();
 
     public PlaceholderService(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -19,7 +24,7 @@ public final class PlaceholderService {
         
         // Register custom PlaceholderAPI expansion
         if (Bukkit.getPluginManager().isPluginEnabled("PlaceholderAPI")) {
-            expansion = new HippoTabExpansion(plugin);
+            expansion = new HippoTabExpansion(plugin, this);
             expansion.register();
             plugin.getLogger().info("Registered HippoTab PlaceholderAPI expansion");
         }
@@ -38,6 +43,13 @@ public final class PlaceholderService {
         }
     }
 
+    public void setConditionalPlaceholders(Map<String, ConditionalPlaceholderConfig> conditionalPlaceholders) {
+        this.conditionalPlaceholders = conditionalPlaceholders == null ? Map.of() : Map.copyOf(conditionalPlaceholders);
+        if (expansion != null) {
+            expansion.setConditionalPlaceholders(this.conditionalPlaceholders);
+        }
+    }
+
     public void unregister() {
         if (expansion != null) {
             expansion.unregister();
@@ -46,14 +58,21 @@ public final class PlaceholderService {
 
     private static class HippoTabExpansion extends PlaceholderExpansion {
         private final JavaPlugin plugin;
+        private final PlaceholderService placeholderService;
         private NameTagService nameTagService;
+        private Map<String, ConditionalPlaceholderConfig> conditionalPlaceholders = Map.of();
 
-        public HippoTabExpansion(JavaPlugin plugin) {
+        public HippoTabExpansion(JavaPlugin plugin, PlaceholderService placeholderService) {
             this.plugin = plugin;
+            this.placeholderService = placeholderService;
         }
 
         public void setNameTagService(NameTagService nameTagService) {
             this.nameTagService = nameTagService;
+        }
+
+        public void setConditionalPlaceholders(Map<String, ConditionalPlaceholderConfig> conditionalPlaceholders) {
+            this.conditionalPlaceholders = conditionalPlaceholders == null ? Map.of() : Map.copyOf(conditionalPlaceholders);
         }
 
         @Override
@@ -106,7 +125,37 @@ public final class PlaceholderService {
                 return "";
             }
 
+            ConditionalPlaceholderConfig conditionalPlaceholder = conditionalPlaceholders.get(identifier);
+            if (conditionalPlaceholder != null) {
+                return resolveConditionalPlaceholder(player, conditionalPlaceholder);
+            }
+
             return null;
+        }
+
+        private String resolveConditionalPlaceholder(Player player, ConditionalPlaceholderConfig conditionalPlaceholder) {
+            String sourceValue = placeholderService.apply(player, conditionalPlaceholder.sourcePlaceholder());
+            String fallback = "";
+
+            for (ConditionalPlaceholderRule rule : conditionalPlaceholder.rules()) {
+                if (rule.isFallback()) {
+                    fallback = placeholderService.apply(player, rule.result());
+                    continue;
+                }
+
+                String expectedValue = placeholderService.apply(player, rule.expectedValue());
+                boolean matched = switch (rule.operator()) {
+                    case "==" -> sourceValue.equalsIgnoreCase(expectedValue);
+                    case "!=" -> !sourceValue.equalsIgnoreCase(expectedValue);
+                    default -> false;
+                };
+
+                if (matched) {
+                    return placeholderService.apply(player, rule.result());
+                }
+            }
+
+            return fallback;
         }
     }
 }
