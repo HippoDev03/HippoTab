@@ -106,8 +106,8 @@ public final class NameTagService {
         // Ensure name tags are visible
         team.setOption(Team.Option.NAME_TAG_VISIBILITY, Team.OptionStatus.ALWAYS);
         
-        // Add player to team
-        if (!team.hasEntity(player)) {
+        // Only send an add when the scoreboard is not already mapped to this team.
+        if (!isCurrentTeamMember(team, player)) {
             team.addEntity(player);
         }
     }
@@ -445,10 +445,9 @@ public final class NameTagService {
     }
 
     public void removePlayer(Player player) {
-        String teamName = getTeamName(player);
         Scoreboard sb = getScoreboard();
-        Team team = sb.getTeam(teamName);
-        if (team != null) {
+        Team team = sb.getTeam(getTeamName(player));
+        if (team != null && isCurrentTeamMember(team, player)) {
             team.removeEntity(player);
         }
         // Reset custom name
@@ -482,6 +481,10 @@ public final class NameTagService {
 
     private String getTeamName(Player player) {
         return "ht_" + player.getUniqueId().toString().substring(0, 12);
+    }
+
+    private boolean isCurrentTeamMember(Team team, Player player) {
+        return getScoreboard().getEntityTeam(player) == team;
     }
 
     public void cleanup() {
