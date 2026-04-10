@@ -4,8 +4,8 @@ version: '$version'
 main: net.mwtw.hippoTab.Core
 api-version: '1.21'
 load: POSTWORLD
-depend: [PlaceholderAPI]
-softdepend: [Vault, VaultUnlocked, packetevents]
+depend: [PlaceholderAPI, packetevents]
+softdepend: [Vault, VaultUnlocked]
 
 commands:
   hippotab:
