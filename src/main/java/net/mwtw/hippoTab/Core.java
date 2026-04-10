@@ -8,6 +8,7 @@ import net.mwtw.hippoTab.text.TabTextFormatter;
 import org.bukkit.Bukkit;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.event.HandlerList;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
@@ -16,9 +17,11 @@ public final class Core extends JavaPlugin {
     private TabService tabService;
     private NameTagService nameTagService;
     private BelowNameService belowNameService;
+    private SidebarScoreboardService sidebarScoreboardService;
     private PlaceholderService placeholderService;
     private ConditionParser conditionParser;
     private ClientTeamStateService clientTeamStateService;
+    private PlayerConnectionListener playerConnectionListener;
 
     @Override
     public void onEnable() {
@@ -29,11 +32,6 @@ public final class Core extends JavaPlugin {
         clientTeamStateService = new ClientTeamStateService(this);
         clientTeamStateService.start();
         reloadPluginState();
-
-        Bukkit.getPluginManager().registerEvents(
-            new PlayerConnectionListener(tabService, nameTagService, belowNameService, clientTeamStateService),
-            this
-        );
 
         PluginCommand command = getCommand("hippotab");
         if (command == null) {
@@ -55,6 +53,9 @@ public final class Core extends JavaPlugin {
         if (belowNameService != null) {
             belowNameService.stop();
         }
+        if (sidebarScoreboardService != null) {
+            sidebarScoreboardService.stop();
+        }
         if (clientTeamStateService != null) {
             clientTeamStateService.stop();
         }
@@ -75,6 +76,9 @@ public final class Core extends JavaPlugin {
         if (belowNameService != null) {
             belowNameService.stop();
         }
+        if (sidebarScoreboardService != null) {
+            sidebarScoreboardService.stop();
+        }
 
         TabConfig tabConfig = TabConfig.from(this).withConditionalPlaceholders(loadConditionalPlaceholderConfig());
         TabTextFormatter formatter = new TabTextFormatter(placeholderService);
@@ -82,14 +86,28 @@ public final class Core extends JavaPlugin {
         tabService = new TabService(this, tabConfig, formatter, placeholderService);
         nameTagService = new NameTagService(this, tabConfig, formatter, conditionParser);
         belowNameService = new BelowNameService(this, tabConfig, formatter, placeholderService, conditionParser);
+        sidebarScoreboardService = new SidebarScoreboardService(this, tabConfig, formatter);
 
         placeholderService.setConditionalPlaceholders(tabConfig.conditionalPlaceholders());
         tabService.setNameTagService(nameTagService);
         tabService.setBelowNameService(belowNameService);
         placeholderService.setNameTagService(nameTagService);
-        
+
+        if (playerConnectionListener != null) {
+            HandlerList.unregisterAll(playerConnectionListener);
+        }
+        playerConnectionListener = new PlayerConnectionListener(
+            tabService,
+            nameTagService,
+            belowNameService,
+            sidebarScoreboardService,
+            clientTeamStateService
+        );
+        Bukkit.getPluginManager().registerEvents(playerConnectionListener, this);
+
         nameTagService.start();
         belowNameService.start();
+        sidebarScoreboardService.start();
         tabService.start();
     }
 

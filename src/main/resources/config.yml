@@ -46,6 +46,19 @@ belowname:
   # Optional: disable in specific conditions
   disable-if: ""
 
+scoreboard:
+  enabled: false
+  # Update interval in ticks (20 ticks = 1 second)
+  update-interval-ticks: 20
+  # Hide the right-side score number column
+  hide-number: false
+  title: " Hippo Network "
+  lines:
+    - ""
+    - " Testing FFA scoreboard "
+    - ""
+    - " danielchen.me "
+
 debug:
   # Logs every outgoing HippoTab team packet seen by PacketEvents.
   # Use this to verify whether the client is still being sent ht_* remove packets.

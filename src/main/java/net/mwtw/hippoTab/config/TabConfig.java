@@ -28,6 +28,11 @@ public record TabConfig(
     String belownameFormat,
     String belownameValue,
     String belownameDisableIf,
+    boolean scoreboardEnabled,
+    long scoreboardUpdateIntervalTicks,
+    boolean scoreboardHideNumber,
+    String scoreboardTitle,
+    List<String> scoreboardLines,
     Map<String, ConditionalPlaceholderConfig> conditionalPlaceholders
 ) {
     public static TabConfig from(JavaPlugin plugin) {
@@ -55,6 +60,11 @@ public record TabConfig(
         String belownameFormat = config.getString("belowname.format", "<red>❤");
         String belownameValue = config.getString("belowname.value", "%player_health%");
         String belownameDisableIf = config.getString("belowname.disable-if", "");
+        boolean scoreboardEnabled = config.getBoolean("scoreboard.enabled", false);
+        long scoreboardUpdateIntervalTicks = Math.max(1L, config.getLong("scoreboard.update-interval-ticks", 20L));
+        boolean scoreboardHideNumber = config.getBoolean("scoreboard.hide-number", false);
+        String scoreboardTitle = config.getString("scoreboard.title", "<aqua><bold>HippoTab</bold>");
+        List<String> scoreboardLines = config.getStringList("scoreboard.lines");
         return new TabConfig(
             updateIntervalTicks,
             headerLines,
@@ -75,6 +85,11 @@ public record TabConfig(
             belownameFormat,
             belownameValue,
             belownameDisableIf,
+            scoreboardEnabled,
+            scoreboardUpdateIntervalTicks,
+            scoreboardHideNumber,
+            scoreboardTitle,
+            scoreboardLines,
             Map.of()
         );
     }
@@ -100,6 +115,11 @@ public record TabConfig(
             belownameFormat,
             belownameValue,
             belownameDisableIf,
+            scoreboardEnabled,
+            scoreboardUpdateIntervalTicks,
+            scoreboardHideNumber,
+            scoreboardTitle,
+            scoreboardLines,
             loadConditionalPlaceholders(config)
         );
     }
