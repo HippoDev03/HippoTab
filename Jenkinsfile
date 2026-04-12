@@ -23,12 +23,12 @@ pipeline {
 
         stage('Build') {
             steps {
-                sh './gradlew --no-daemon clean jar'
+                sh './gradlew --no-daemon clean shadowJar'
                 sh '''
                     set -eu
-                    jar_file="$(find build/libs -maxdepth 1 -type f -name '*.jar' | head -n 1)"
+                    jar_file="$(find build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*-slim.jar' | head -n 1)"
                     if [ -z "$jar_file" ]; then
-                      echo "No jar found in build/libs"
+                      echo "No full jar found in build/libs"
                       exit 1
                     fi
                     jar_dir="$(dirname "$jar_file")"
