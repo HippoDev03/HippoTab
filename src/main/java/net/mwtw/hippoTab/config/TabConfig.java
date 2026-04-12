@@ -33,6 +33,7 @@ public record TabConfig(
     boolean scoreboardHideNumber,
     String scoreboardTitle,
     List<String> scoreboardLines,
+    RedisSyncConfig redisSync,
     Map<String, ConditionalPlaceholderConfig> conditionalPlaceholders
 ) {
     public static TabConfig from(JavaPlugin plugin) {
@@ -65,6 +66,7 @@ public record TabConfig(
         boolean scoreboardHideNumber = config.getBoolean("scoreboard.hide-number", false);
         String scoreboardTitle = config.getString("scoreboard.title", "<aqua><bold>HippoTab</bold>");
         List<String> scoreboardLines = config.getStringList("scoreboard.lines");
+        RedisSyncConfig redisSync = RedisSyncConfig.from(plugin);
         return new TabConfig(
             updateIntervalTicks,
             headerLines,
@@ -90,6 +92,7 @@ public record TabConfig(
             scoreboardHideNumber,
             scoreboardTitle,
             scoreboardLines,
+            redisSync,
             Map.of()
         );
     }
@@ -120,6 +123,7 @@ public record TabConfig(
             scoreboardHideNumber,
             scoreboardTitle,
             scoreboardLines,
+            redisSync,
             loadConditionalPlaceholders(config)
         );
     }

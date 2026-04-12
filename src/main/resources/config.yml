@@ -59,6 +59,21 @@ scoreboard:
     - ""
     - " danielchen.me "
 
+redis-sync:
+  enabled: false
+  host: "127.0.0.1"
+  port: 6379
+  username: ""
+  password: ""
+  database: 0
+  key-prefix: "hippotab:tab-sync"
+  # Leave blank to auto-use this server port (server-25565, etc)
+  server-id: ""
+  # Redis publish + fetch interval in ticks.
+  publish-interval-ticks: 40
+  # How long each server entry stays alive if it stops publishing.
+  entry-ttl-seconds: 30
+
 debug:
   # Logs every outgoing HippoTab team packet seen by PacketEvents.
   # Use this to verify whether the client is still being sent ht_* remove packets.

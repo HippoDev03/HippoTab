@@ -21,6 +21,7 @@ public final class Core extends JavaPlugin {
     private PlaceholderService placeholderService;
     private ConditionParser conditionParser;
     private ClientTeamStateService clientTeamStateService;
+    private RedisTabSyncService redisTabSyncService;
     private PlayerConnectionListener playerConnectionListener;
 
     @Override
@@ -59,6 +60,9 @@ public final class Core extends JavaPlugin {
         if (clientTeamStateService != null) {
             clientTeamStateService.stop();
         }
+        if (redisTabSyncService != null) {
+            redisTabSyncService.stop();
+        }
         if (placeholderService != null) {
             placeholderService.unregister();
         }
@@ -79,6 +83,9 @@ public final class Core extends JavaPlugin {
         if (sidebarScoreboardService != null) {
             sidebarScoreboardService.stop();
         }
+        if (redisTabSyncService != null) {
+            redisTabSyncService.stop();
+        }
 
         TabConfig tabConfig = TabConfig.from(this).withConditionalPlaceholders(loadConditionalPlaceholderConfig());
         TabTextFormatter formatter = new TabTextFormatter(placeholderService);
@@ -87,6 +94,7 @@ public final class Core extends JavaPlugin {
         nameTagService = new NameTagService(this, tabConfig, formatter, conditionParser);
         belowNameService = new BelowNameService(this, tabConfig, formatter, placeholderService, conditionParser);
         sidebarScoreboardService = new SidebarScoreboardService(this, tabConfig, formatter);
+        redisTabSyncService = new RedisTabSyncService(this, tabConfig, formatter, placeholderService);
 
         placeholderService.setConditionalPlaceholders(tabConfig.conditionalPlaceholders());
         tabService.setNameTagService(nameTagService);
@@ -109,6 +117,7 @@ public final class Core extends JavaPlugin {
         belowNameService.start();
         sidebarScoreboardService.start();
         tabService.start();
+        redisTabSyncService.start();
     }
 
     private YamlConfiguration loadConditionalPlaceholderConfig() {

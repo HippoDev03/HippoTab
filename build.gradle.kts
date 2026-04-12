@@ -1,5 +1,6 @@
 plugins {
     id("java-library")
+    id("com.gradleup.shadow") version "9.0.0-beta13"
     id("xyz.jpenilla.run-paper") version "3.0.2"
 }
 
@@ -15,6 +16,7 @@ dependencies {
     compileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
     compileOnly("me.clip:placeholderapi:2.11.6")
     compileOnly("com.github.retrooper:packetevents-spigot:2.10.1")
+    implementation("redis.clients:jedis:5.2.0")
 }
 
 java {
@@ -22,6 +24,20 @@ java {
 }
 
 tasks {
+    shadowJar {
+        archiveClassifier.set("")
+        relocate("redis.clients", "net.mwtw.hippoTab.libs.redis.clients")
+        relocate("org.apache.commons.pool2", "net.mwtw.hippoTab.libs.org.apache.commons.pool2")
+    }
+
+    jar {
+        archiveClassifier.set("slim")
+    }
+
+    build {
+        dependsOn(shadowJar)
+    }
+
     runServer {
         // Configure the Minecraft version for our task.
         // This is the only required configuration besides applying the plugin.
