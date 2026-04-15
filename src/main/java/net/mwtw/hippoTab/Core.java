@@ -15,8 +15,7 @@ import java.io.File;
 
 public final class Core extends JavaPlugin {
     private TabService tabService;
-    private NameTagService nameTagService;
-    private BelowNameService belowNameService;
+    private NametagService nametagService;
     private SidebarScoreboardService sidebarScoreboardService;
     private PlaceholderService placeholderService;
     private ConditionParser conditionParser;
@@ -48,11 +47,8 @@ public final class Core extends JavaPlugin {
         if (tabService != null) {
             tabService.stop();
         }
-        if (nameTagService != null) {
-            nameTagService.cleanup();
-        }
-        if (belowNameService != null) {
-            belowNameService.stop();
+        if (nametagService != null) {
+            nametagService.stop();
         }
         if (sidebarScoreboardService != null) {
             sidebarScoreboardService.stop();
@@ -74,11 +70,8 @@ public final class Core extends JavaPlugin {
         if (tabService != null) {
             tabService.stop();
         }
-        if (nameTagService != null) {
-            nameTagService.cleanup();
-        }
-        if (belowNameService != null) {
-            belowNameService.stop();
+        if (nametagService != null) {
+            nametagService.stop();
         }
         if (sidebarScoreboardService != null) {
             sidebarScoreboardService.stop();
@@ -91,30 +84,25 @@ public final class Core extends JavaPlugin {
         TabTextFormatter formatter = new TabTextFormatter(placeholderService);
         
         tabService = new TabService(this, tabConfig, formatter, placeholderService);
-        nameTagService = new NameTagService(this, tabConfig, formatter, conditionParser);
-        belowNameService = new BelowNameService(this, tabConfig, formatter, placeholderService, conditionParser);
+        nametagService = new NametagService(this, tabConfig, formatter, placeholderService, conditionParser);
         sidebarScoreboardService = new SidebarScoreboardService(this, tabConfig, formatter);
         redisTabSyncService = new RedisTabSyncService(this, tabConfig, formatter, placeholderService);
 
         placeholderService.setConditionalPlaceholders(tabConfig.conditionalPlaceholders());
-        tabService.setNameTagService(nameTagService);
-        tabService.setBelowNameService(belowNameService);
-        placeholderService.setNameTagService(nameTagService);
+        placeholderService.setNametagService(nametagService);
 
         if (playerConnectionListener != null) {
             HandlerList.unregisterAll(playerConnectionListener);
         }
         playerConnectionListener = new PlayerConnectionListener(
             tabService,
-            nameTagService,
-            belowNameService,
+            nametagService,
             sidebarScoreboardService,
             clientTeamStateService
         );
         Bukkit.getPluginManager().registerEvents(playerConnectionListener, this);
 
-        nameTagService.start();
-        belowNameService.start();
+        nametagService.start();
         sidebarScoreboardService.start();
         tabService.start();
         redisTabSyncService.start();

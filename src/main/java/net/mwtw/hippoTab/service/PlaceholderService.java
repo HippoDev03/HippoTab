@@ -37,9 +37,9 @@ public final class PlaceholderService {
         return text;
     }
 
-    public void setNameTagService(NameTagService nameTagService) {
+    public void setNametagService(NametagService nametagService) {
         if (expansion != null) {
-            expansion.setNameTagService(nameTagService);
+            expansion.setNametagService(nametagService);
         }
     }
 
@@ -59,7 +59,7 @@ public final class PlaceholderService {
     private static class HippoTabExpansion extends PlaceholderExpansion {
         private final JavaPlugin plugin;
         private final PlaceholderService placeholderService;
-        private NameTagService nameTagService;
+        private NametagService nametagService;
         private Map<String, ConditionalPlaceholderConfig> conditionalPlaceholders = Map.of();
 
         public HippoTabExpansion(JavaPlugin plugin, PlaceholderService placeholderService) {
@@ -67,8 +67,8 @@ public final class PlaceholderService {
             this.placeholderService = placeholderService;
         }
 
-        public void setNameTagService(NameTagService nameTagService) {
-            this.nameTagService = nameTagService;
+        public void setNametagService(NametagService nametagService) {
+            this.nametagService = nametagService;
         }
 
         public void setConditionalPlaceholders(Map<String, ConditionalPlaceholderConfig> conditionalPlaceholders) {
@@ -103,24 +103,24 @@ public final class PlaceholderService {
 
             // %hippotab_nametag% - Returns the formatted name tag (prefix + name + suffix)
             if (identifier.equals("nametag")) {
-                if (nameTagService != null) {
-                    return nameTagService.getFormattedName(player);
+                if (nametagService != null) {
+                    return nametagService.getFormattedName(player);
                 }
                 return player.getName();
             }
 
             // %hippotab_nametag_prefix% - Returns just the prefix
             if (identifier.equals("nametag_prefix")) {
-                if (nameTagService != null) {
-                    return nameTagService.getFormattedPrefix(player);
+                if (nametagService != null) {
+                    return nametagService.getFormattedPrefix(player);
                 }
                 return "";
             }
 
             // %hippotab_nametag_suffix% - Returns just the suffix
             if (identifier.equals("nametag_suffix")) {
-                if (nameTagService != null) {
-                    return nameTagService.getFormattedSuffix(player);
+                if (nametagService != null) {
+                    return nametagService.getFormattedSuffix(player);
                 }
                 return "";
             }

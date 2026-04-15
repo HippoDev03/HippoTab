@@ -23,6 +23,9 @@ public record TabConfig(
     String nametagPrefix,
     String nametagSuffix,
     String nametagDisableIf,
+    String nametagBillboard,
+    double nametagOffsetY,
+    boolean nametagHideVanillaNametag,
     boolean belownameEnabled,
     long belownameUpdateIntervalTicks,
     String belownameFormat,
@@ -49,18 +52,38 @@ public record TabConfig(
         boolean sortingDescending = config.getBoolean("sorting.descending", true);
         int defaultRank = config.getInt("sorting.default-rank", 0);
 
-        boolean nametagEnabled = config.getBoolean("nametag.enabled", true);
-        boolean nametagAutoAssignTeam = config.getBoolean("nametag.auto-assign-team", false);
-        long nametagUpdateIntervalTicks = Math.max(1L, config.getLong("nametag.update-interval-ticks", 40L));
-        String nametagPrefix = config.getString("nametag.prefix", "%vaultunlocked_prefix%");
-        String nametagSuffix = config.getString("nametag.suffix", "");
-        String nametagDisableIf = config.getString("nametag.disable-if", "");
+        String nametagRoot = config.isConfigurationSection("textdisplay-nametag") ? "textdisplay-nametag" : "nametag";
 
-        boolean belownameEnabled = config.getBoolean("belowname.enabled", true);
-        long belownameUpdateIntervalTicks = Math.max(1L, config.getLong("belowname.update-interval-ticks", 20L));
-        String belownameFormat = config.getString("belowname.format", "<red>❤");
-        String belownameValue = config.getString("belowname.value", "%player_health%");
-        String belownameDisableIf = config.getString("belowname.disable-if", "");
+        boolean nametagEnabled = config.getBoolean(nametagRoot + ".enabled", config.getBoolean("nametag.enabled", true));
+        boolean nametagAutoAssignTeam = config.getBoolean("nametag.auto-assign-team", false);
+        long nametagUpdateIntervalTicks = Math.max(1L, config.getLong(
+            nametagRoot + ".update-interval-ticks",
+            config.getLong("nametag.update-interval-ticks", 20L)
+        ));
+        String nametagPrefix = config.getString(nametagRoot + ".prefix", config.getString("nametag.prefix", "%vaultunlocked_prefix%"));
+        String nametagSuffix = config.getString(nametagRoot + ".suffix", config.getString("nametag.suffix", ""));
+        String nametagDisableIf = config.getString(nametagRoot + ".disable-if", config.getString("nametag.disable-if", ""));
+        String nametagBillboard = config.getString(nametagRoot + ".billboard", "VERTICAL");
+        double nametagOffsetY = config.getDouble(nametagRoot + ".offset-y", 0.9D);
+        boolean nametagHideVanillaNametag = config.getBoolean(nametagRoot + ".hide-vanilla-nametag", true);
+
+        boolean belownameEnabled = config.getBoolean(
+            nametagRoot + ".second-line.enabled",
+            config.getBoolean("belowname.enabled", true)
+        );
+        long belownameUpdateIntervalTicks = nametagUpdateIntervalTicks;
+        String belownameFormat = config.getString(
+            nametagRoot + ".second-line.format",
+            config.getString("belowname.format", "<red>❤")
+        );
+        String belownameValue = config.getString(
+            nametagRoot + ".second-line.value",
+            config.getString("belowname.value", "%player_health%")
+        );
+        String belownameDisableIf = config.getString(
+            nametagRoot + ".second-line.disable-if",
+            config.getString("belowname.disable-if", "")
+        );
         boolean scoreboardEnabled = config.getBoolean("scoreboard.enabled", false);
         long scoreboardUpdateIntervalTicks = Math.max(1L, config.getLong("scoreboard.update-interval-ticks", 20L));
         boolean scoreboardHideNumber = config.getBoolean("scoreboard.hide-number", false);
@@ -82,6 +105,9 @@ public record TabConfig(
             nametagPrefix,
             nametagSuffix,
             nametagDisableIf,
+            nametagBillboard,
+            nametagOffsetY,
+            nametagHideVanillaNametag,
             belownameEnabled,
             belownameUpdateIntervalTicks,
             belownameFormat,
@@ -113,6 +139,9 @@ public record TabConfig(
             nametagPrefix,
             nametagSuffix,
             nametagDisableIf,
+            nametagBillboard,
+            nametagOffsetY,
+            nametagHideVanillaNametag,
             belownameEnabled,
             belownameUpdateIntervalTicks,
             belownameFormat,

@@ -21,8 +21,6 @@ public final class TabService {
     private final TabConfig config;
     private final TabTextFormatter formatter;
     private final PlaceholderService placeholderService;
-    private NameTagService nameTagService;
-    private BelowNameService belowNameService;
 
     private BukkitTask updateTask;
 
@@ -31,14 +29,6 @@ public final class TabService {
         this.config = config;
         this.formatter = formatter;
         this.placeholderService = placeholderService;
-    }
-
-    public void setNameTagService(NameTagService nameTagService) {
-        this.nameTagService = nameTagService;
-    }
-
-    public void setBelowNameService(BelowNameService belowNameService) {
-        this.belowNameService = belowNameService;
     }
 
     public void start() {

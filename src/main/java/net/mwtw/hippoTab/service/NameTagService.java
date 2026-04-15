@@ -1,47 +1,56 @@
 package net.mwtw.hippoTab.service;
 
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
 import net.mwtw.hippoTab.config.TabConfig;
 import net.mwtw.hippoTab.text.TabTextFormatter;
 import org.bukkit.Bukkit;
+import org.bukkit.GameMode;
+import org.bukkit.Location;
+import org.bukkit.entity.Display;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.TextDisplay;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.scoreboard.Scoreboard;
 import org.bukkit.scoreboard.Team;
+import org.bukkit.util.Transformation;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 
-import java.util.HashSet;
-import java.util.Set;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.UUID;
 
-public final class NameTagService {
+public final class NametagService {
+    private static final String DISPLAY_TAG = "hippotab_nametag_display";
+    private static final String HIDE_TEAM_NAME = "ht_textdisplay_hide";
+
     private final JavaPlugin plugin;
     private final TabConfig config;
     private final TabTextFormatter formatter;
+    private final PlaceholderService placeholderService;
     private final ConditionParser conditionParser;
-    private Scoreboard scoreboard;
+    private final Map<UUID, UUID> displayByPlayer = new HashMap<>();
     private BukkitTask updateTask;
+    private Scoreboard scoreboard;
+    private Team hideNametagTeam;
 
-    public NameTagService(JavaPlugin plugin, TabConfig config, TabTextFormatter formatter, ConditionParser conditionParser) {
+    public NametagService(JavaPlugin plugin, TabConfig config, TabTextFormatter formatter,
+                          PlaceholderService placeholderService, ConditionParser conditionParser) {
         this.plugin = plugin;
         this.config = config;
         this.formatter = formatter;
+        this.placeholderService = placeholderService;
         this.conditionParser = conditionParser;
     }
 
-    private Scoreboard getScoreboard() {
-        if (scoreboard == null) {
-            scoreboard = Bukkit.getScoreboardManager().getMainScoreboard();
-        }
-        return scoreboard;
-    }
-
     public void start() {
-        if (!config.nametagEnabled()) {
+        if (!shouldRun()) {
             return;
         }
 
-        pruneUnusedTeams();
         updateAll();
         updateTask = Bukkit.getScheduler().runTaskTimer(
             plugin,
@@ -56,491 +65,304 @@ public final class NameTagService {
             updateTask.cancel();
             updateTask = null;
         }
+        restoreVanillaNametags();
+        removeAllDisplays();
     }
 
     public void updateAll() {
-        if (!config.nametagEnabled()) {
+        if (!shouldRun()) {
+            removeAllDisplays();
             return;
         }
 
         for (Player player : Bukkit.getOnlinePlayers()) {
             updatePlayer(player);
         }
+        pruneStaleMappings();
     }
 
     public void updatePlayer(Player player) {
-        if (!config.nametagEnabled()) {
+        if (!shouldRun()) {
+            setVanillaNametagHidden(player, false);
+            removePlayer(player);
             return;
         }
 
-        if (!conditionParser.evaluate(player, config.nametagDisableIf())) {
-            removePlayerTag(player);
+        if (isDisplayDisabled(player)) {
+            setVanillaNametagHidden(player, false);
+            removePlayer(player);
             return;
         }
 
-        Team currentTeam = getScoreboard().getEntityTeam(player);
-        Team team = getScoreboard().getTeam(getTeamName(player));
+        setVanillaNametagHidden(player, true);
 
-        if (currentTeam != null && currentTeam != team) {
-            if (!config.nametagAutoAssignTeam() || !isHippoTeam(currentTeam)) {
-                return;
+        Component text = buildDisplayText(player);
+        if (text == null) {
+            removePlayer(player);
+            return;
+        }
+
+        TextDisplay display = getOrCreateDisplay(player);
+        if (display == null) {
+            return;
+        }
+
+        display.text(text);
+        syncDisplayAttachment(player, display);
+    }
+
+    public void removePlayer(Player player) {
+        if (hideNametagTeam != null) {
+            hideNametagTeam.removeEntity(player);
+        }
+        UUID entityId = displayByPlayer.remove(player.getUniqueId());
+        if (entityId != null) {
+            removeEntity(entityId);
+        }
+        for (Entity passenger : player.getPassengers()) {
+            if (passenger instanceof TextDisplay && passenger.getScoreboardTags().contains(DISPLAY_TAG)) {
+                passenger.remove();
             }
-            team = currentTeam;
-        }
-
-        if (team == null) {
-            if (!config.nametagAutoAssignTeam()) {
-                return;
-            }
-            team = getOrCreateTeam(player);
-        }
-
-        String resolvedPrefix = formatter.toMiniMessageText(player, config.nametagPrefix());
-        NamedTextColor prefixColor = parseNamedColor(resolvedPrefix);
-        String visiblePrefix = stripTrailingNameColorTokens(resolvedPrefix);
-
-        // Build prefix and suffix components
-        Component prefix = formatter.fromMiniMessage(visiblePrefix);
-        Component suffix = formatter.toComponent(player, config.nametagSuffix());
-        
-        team.prefix(prefix);
-        team.suffix(suffix);
-        
-        // Determine the player name color
-        // Priority: 1) Last color from prefix, 2) WHITE fallback
-        NamedTextColor teamColor = null;
-        
-        if (prefixColor != null) {
-            teamColor = prefixColor;
-        }
-        
-        // Final fallback to WHITE
-        if (teamColor == null) {
-            teamColor = NamedTextColor.WHITE;
-        }
-        
-        // Apply team color to the player name part
-        team.color(teamColor);
-        
-        // Ensure name tags are visible
-        team.setOption(Team.Option.NAME_TAG_VISIBILITY, Team.OptionStatus.ALWAYS);
-        
-        // Only send an add when the scoreboard is not already mapped to this team.
-        if (!isCurrentTeamMember(team, player)) {
-            if (!config.nametagAutoAssignTeam()) {
-                return;
-            }
-            team.addEntity(player);
         }
     }
 
     public String getFormattedName(Player player) {
-        String prefix = getVisiblePrefixText(player);
-        String suffix = formatter.getPlaceholderService().apply(player, config.nametagSuffix());
-        return prefix + player.getName() + suffix;
+        return getFormattedPrefix(player) + player.getName() + getFormattedSuffix(player);
     }
 
     public String getFormattedPrefix(Player player) {
-        return getVisiblePrefixText(player);
+        return placeholderService.apply(player, config.nametagPrefix() == null ? "" : config.nametagPrefix());
     }
 
     public String getFormattedSuffix(Player player) {
-        return formatter.getPlaceholderService().apply(player, config.nametagSuffix());
+        return placeholderService.apply(player, config.nametagSuffix() == null ? "" : config.nametagSuffix());
     }
 
-    private String getVisiblePrefixText(Player player) {
-        String resolvedPrefix = formatter.toMiniMessageText(player, config.nametagPrefix());
-        return stripTrailingNameColorTokens(resolvedPrefix);
-    }
-
-    private NamedTextColor parseNamedColor(String processed) {
-        NamedTextColor lastColor = null;
-
-        for (int i = 0; i < processed.length(); i++) {
-            char current = processed.charAt(i);
-
-            // Parse MiniMessage-style colors first (these come from PAPI or converted legacy codes)
-            if (current == '<') {
-                int end = processed.indexOf('>', i + 1);
-                if (end < 0) {
-                    continue;
-                }
-                String token = processed.substring(i + 1, end);
-                if (token.length() == 7 && token.charAt(0) == '#' && isHexColor(token.substring(1))) {
-                    lastColor = findNearestNamedColor(token.substring(1));
-                } else {
-                    NamedTextColor namedColor = NamedTextColor.NAMES.value(token);
-                    if (namedColor != null) {
-                        lastColor = namedColor;
-                    }
-                }
-                i = end;
-                continue;
+    private Integer resolveValue(Player player) {
+        String valueStr = placeholderService.apply(player, config.belownameValue());
+        try {
+            String cleaned = valueStr.replaceAll("[^0-9.\\-]", "");
+            if (cleaned.isEmpty()) {
+                return null;
             }
-
-            if (current != '&' && current != '§' || i + 1 >= processed.length()) {
-                continue;
-            }
-
-            char code = Character.toLowerCase(processed.charAt(i + 1));
-
-            // &#RRGGBB or §#RRGGBB (parse these before legacy codes)
-            if (code == '#' && i + 7 < processed.length()) {
-                String hex = processed.substring(i + 2, i + 8);
-                if (isHexColor(hex)) {
-                    lastColor = findNearestNamedColor(hex);
-                    i += 7;
-                    continue;
-                }
-            }
-
-            // &x&F&F&0&0&0&0 / §x§F§F§0§0§0§0 (parse these before legacy codes)
-            if (code == 'x' && i + 13 < processed.length()) {
-                StringBuilder hex = new StringBuilder(6);
-                boolean valid = true;
-                for (int idx = 0; idx < 6; idx++) {
-                    int markerIndex = i + 2 + (idx * 2);
-                    if (processed.charAt(markerIndex) != current) {
-                        valid = false;
-                        break;
-                    }
-                    char hexChar = processed.charAt(markerIndex + 1);
-                    if (!isHexChar(hexChar)) {
-                        valid = false;
-                        break;
-                    }
-                    hex.append(hexChar);
-                }
-                if (valid) {
-                    lastColor = findNearestNamedColor(hex.toString());
-                    i += 13;
-                    continue;
-                }
-            }
-
-            // Legacy color codes (parsed last)
-            NamedTextColor legacyColor = getLegacyColor(code);
-            if (legacyColor != null) {
-                lastColor = legacyColor;
-                i++;
-            }
-        }
-
-        String trailingHex = extractTrailingRawHexToken(processed);
-        if (trailingHex != null) {
-            lastColor = findNearestNamedColor(trailingHex);
-        }
-
-        return lastColor;
-    }
-
-    // Removes trailing color-only markers used to color the player name (e.g. "<#29A3DB>", "<red>", "&c").
-    private String stripTrailingNameColorTokens(String input) {
-        String value = input;
-        while (true) {
-            int end = value.length();
-            while (end > 0 && Character.isWhitespace(value.charAt(end - 1))) {
-                end--;
-            }
-            if (end == 0) {
-                return value;
-            }
-
-            boolean removed = false;
-
-            if (value.charAt(end - 1) == '>') {
-                int start = value.lastIndexOf('<', end - 1);
-                if (start >= 0) {
-                    String token = value.substring(start + 1, end).trim();
-                    if (isMiniMessageColorToken(token)) {
-                        value = value.substring(0, start) + value.substring(end);
-                        removed = true;
-                    }
-                }
-            }
-
-            if (!removed && end >= 2) {
-                char marker = value.charAt(end - 2);
-                char code = Character.toLowerCase(value.charAt(end - 1));
-                if ((marker == '&' || marker == '§') && getLegacyColor(code) != null) {
-                    value = value.substring(0, end - 2) + value.substring(end);
-                    removed = true;
-                }
-            }
-
-            if (!removed) {
-                int start = trailingLegacyHexStart(value);
-                if (start >= 0) {
-                    value = value.substring(0, start);
-                    removed = true;
-                }
-            }
-
-            if (!removed) {
-                String trailingHex = extractTrailingRawHexToken(value);
-                if (trailingHex != null) {
-                    int start = trailingRawHexStart(value);
-                    if (start >= 0) {
-                        value = value.substring(0, start);
-                        removed = true;
-                    }
-                }
-            }
-
-            if (!removed) {
-                return value;
-            }
-        }
-    }
-
-    private boolean isMiniMessageColorToken(String token) {
-        if (token.isEmpty() || token.charAt(0) == '/') {
-            return false;
-        }
-        if (token.equalsIgnoreCase("reset")) {
-            return true;
-        }
-        if (token.charAt(0) == '#' && token.length() == 7 && isHexColor(token.substring(1))) {
-            return true;
-        }
-        return NamedTextColor.NAMES.value(token) != null;
-    }
-
-    private boolean isHexColor(String value) {
-        if (value.length() != 6) {
-            return false;
-        }
-        for (int i = 0; i < value.length(); i++) {
-            if (!isHexChar(value.charAt(i))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private boolean isHexChar(char character) {
-        return (character >= '0' && character <= '9')
-            || (character >= 'a' && character <= 'f')
-            || (character >= 'A' && character <= 'F');
-    }
-
-    private String extractTrailingRawHexToken(String value) {
-        int start = trailingRawHexStart(value);
-        if (start < 0) {
+            return (int) Math.round(Double.parseDouble(cleaned));
+        } catch (NumberFormatException e) {
+            plugin.getLogger().warning("Could not parse nametag second-line value for " + player.getName() + ": " + valueStr);
             return null;
         }
-        String token = value.substring(start).trim();
-        if (token.startsWith("#")) {
-            token = token.substring(1);
-        }
-        return isHexColor(token) ? token : null;
     }
 
-    private int trailingRawHexStart(String value) {
-        int end = value.length();
-        while (end > 0 && Character.isWhitespace(value.charAt(end - 1))) {
-            end--;
+    private Component buildDisplayText(Player player) {
+        Component nameLine = buildNametagLine(player);
+        Component valueLine = buildBelowValueLine(player);
+
+        if (nameLine == null && valueLine == null) {
+            return null;
         }
-        if (end == 0) {
-            return -1;
+        if (nameLine == null) {
+            return valueLine;
+        }
+        if (valueLine == null) {
+            return nameLine;
+        }
+        return nameLine.append(Component.newline()).append(valueLine);
+    }
+
+    private Component buildNametagLine(Player player) {
+        if (!config.nametagEnabled()) {
+            return null;
         }
 
-        int start = end;
-        while (start > 0) {
-            char c = value.charAt(start - 1);
-            if (Character.isWhitespace(c)) {
-                break;
+        String prefix = config.nametagPrefix() == null ? "" : config.nametagPrefix();
+        String suffix = config.nametagSuffix() == null ? "" : config.nametagSuffix();
+        return formatter.toComponent(player, prefix + player.getName() + suffix);
+    }
+
+    private Component buildBelowValueLine(Player player) {
+        if (!config.belownameEnabled()) {
+            return null;
+        }
+        if (config.belownameDisableIf() != null
+            && !config.belownameDisableIf().isBlank()
+            && conditionParser.evaluate(player, config.belownameDisableIf())) {
+            return null;
+        }
+
+        Integer value = resolveValue(player);
+        if (value == null || value == 0) {
+            return null;
+        }
+
+        String format = config.belownameFormat() == null ? "" : config.belownameFormat();
+        if (format.isBlank()) {
+            return Component.text(value);
+        }
+        return formatter.toComponent(player, format)
+            .append(Component.space())
+            .append(Component.text(value));
+    }
+
+    private TextDisplay getOrCreateDisplay(Player player) {
+        UUID playerId = player.getUniqueId();
+        UUID existingId = displayByPlayer.get(playerId);
+        if (existingId != null) {
+            Entity entity = Bukkit.getEntity(existingId);
+            if (entity instanceof TextDisplay display && display.isValid()) {
+                return display;
             }
-            start--;
+            displayByPlayer.remove(playerId);
         }
 
-        String token = value.substring(start, end).trim();
-        String normalized = token.startsWith("#") ? token.substring(1) : token;
-        if (!isHexColor(normalized)) {
-            return -1;
-        }
-        return start;
+        TextDisplay display = player.getWorld().spawn(player.getLocation(), TextDisplay.class, spawned -> {
+            spawned.addScoreboardTag(DISPLAY_TAG);
+            spawned.setPersistent(false);
+            spawned.setInvulnerable(true);
+            spawned.setGravity(false);
+            spawned.setBillboard(resolveBillboard());
+            spawned.setAlignment(TextDisplay.TextAlignment.CENTER);
+            spawned.setSeeThrough(true);
+            spawned.setShadowed(false);
+            spawned.setDefaultBackground(false);
+            spawned.setVisibleByDefault(true);
+            spawned.setTransformation(buildHeadOffsetTransform());
+            spawned.setViewRange(128.0F);
+        });
+
+        displayByPlayer.put(playerId, display.getUniqueId());
+        return display;
     }
 
-    private int trailingLegacyHexStart(String value) {
-        int end = trimmedEnd(value);
-        if (end == 0) {
-            return -1;
+    private void syncDisplayAttachment(Player player, TextDisplay display) {
+        if (player.getGameMode() == GameMode.SPECTATOR) {
+            if (display.getVehicle() != null) {
+                display.leaveVehicle();
+            }
+            Location headLocation = player.getLocation().add(0.0, player.getHeight() + config.nametagOffsetY(), 0.0);
+            display.teleport(headLocation);
+            return;
         }
+        display.setTransformation(buildHeadOffsetTransform());
+        ensureMounted(player, display);
+    }
 
-        int start = Math.max(0, end - 8);
-        if (end - start == 8) {
-            char marker = value.charAt(start);
-            char type = value.charAt(start + 1);
-            if ((marker == '&' || marker == '§') && type == '#') {
-                String hex = value.substring(start + 2, end);
-                if (isHexColor(hex)) {
-                    return start;
+    private void ensureMounted(Player player, TextDisplay display) {
+        if (display.getVehicle() == player) {
+            return;
+        }
+        if (!player.addPassenger(display)) {
+            display.remove();
+            displayByPlayer.remove(player.getUniqueId());
+        }
+    }
+
+    private void removeAllDisplays() {
+        for (UUID entityId : displayByPlayer.values()) {
+            removeEntity(entityId);
+        }
+        displayByPlayer.clear();
+
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            for (Entity passenger : player.getPassengers()) {
+                if (passenger instanceof TextDisplay && passenger.getScoreboardTags().contains(DISPLAY_TAG)) {
+                    passenger.remove();
                 }
             }
         }
+    }
 
-        start = Math.max(0, end - 14);
-        if (end - start == 14) {
-            char marker = value.charAt(start);
-            char type = Character.toLowerCase(value.charAt(start + 1));
-            if ((marker == '&' || marker == '§') && type == 'x' && isLegacySplitHex(value, start, marker)) {
-                return start;
+    private void pruneStaleMappings() {
+        Iterator<Map.Entry<UUID, UUID>> iterator = displayByPlayer.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<UUID, UUID> entry = iterator.next();
+            Player player = Bukkit.getPlayer(entry.getKey());
+            Entity entity = Bukkit.getEntity(entry.getValue());
+            if (player == null || !player.isOnline() || !(entity instanceof TextDisplay) || !entity.isValid()) {
+                if (entity != null) {
+                    entity.remove();
+                }
+                iterator.remove();
             }
         }
-
-        return -1;
     }
 
-    private int trimmedEnd(String value) {
-        int end = value.length();
-        while (end > 0 && Character.isWhitespace(value.charAt(end - 1))) {
-            end--;
+    private void removeEntity(UUID entityId) {
+        Entity entity = Bukkit.getEntity(entityId);
+        if (entity != null) {
+            entity.remove();
         }
-        return end;
     }
 
-    private boolean isLegacySplitHex(String value, int start, char marker) {
-        for (int idx = 0; idx < 6; idx++) {
-            int markerIndex = start + 2 + (idx * 2);
-            if (value.charAt(markerIndex) != marker || !isHexChar(value.charAt(markerIndex + 1))) {
-                return false;
-            }
+    private boolean shouldRun() {
+        return config.nametagEnabled() || config.belownameEnabled();
+    }
+
+    private boolean isDisplayDisabled(Player player) {
+        if (player.getGameMode() == GameMode.SPECTATOR) {
+            return false;
         }
-        return true;
+        return config.nametagDisableIf() != null
+            && !config.nametagDisableIf().isBlank()
+            && conditionParser.evaluate(player, config.nametagDisableIf());
     }
 
-    private NamedTextColor findNearestNamedColor(String hex) {
-        // Convert hex to RGB
-        int r = Integer.parseInt(hex.substring(0, 2), 16);
-        int g = Integer.parseInt(hex.substring(2, 4), 16);
-        int b = Integer.parseInt(hex.substring(4, 6), 16);
-        
-        return findNearestNamedColorFromRGB(r, g, b);
-    }
-    
-    private NamedTextColor findNearestNamedColorFromRGB(int r, int g, int b) {
-        // Find closest named color (simple distance calculation)
-        NamedTextColor closest = NamedTextColor.WHITE;
-        double minDistance = Double.MAX_VALUE;
-        
-        for (NamedTextColor color : NamedTextColor.NAMES.values()) {
-            int cr = color.red();
-            int cg = color.green();
-            int cb = color.blue();
-            
-            double distance = Math.sqrt(
-                Math.pow(r - cr, 2) + 
-                Math.pow(g - cg, 2) + 
-                Math.pow(b - cb, 2)
-            );
-            
-            if (distance < minDistance) {
-                minDistance = distance;
-                closest = color;
-            }
+    private Display.Billboard resolveBillboard() {
+        String raw = config.nametagBillboard();
+        if (raw == null || raw.isBlank()) {
+            return Display.Billboard.VERTICAL;
         }
-        
-        return closest;
+        try {
+            return Display.Billboard.valueOf(raw.trim().toUpperCase());
+        } catch (IllegalArgumentException ignored) {
+            return Display.Billboard.VERTICAL;
+        }
     }
 
-    private NamedTextColor getLegacyColor(char code) {
-        return switch (code) {
-            case '0' -> NamedTextColor.BLACK;
-            case '1' -> NamedTextColor.DARK_BLUE;
-            case '2' -> NamedTextColor.DARK_GREEN;
-            case '3' -> NamedTextColor.DARK_AQUA;
-            case '4' -> NamedTextColor.DARK_RED;
-            case '5' -> NamedTextColor.DARK_PURPLE;
-            case '6' -> NamedTextColor.GOLD;
-            case '7' -> NamedTextColor.GRAY;
-            case '8' -> NamedTextColor.DARK_GRAY;
-            case '9' -> NamedTextColor.BLUE;
-            case 'a' -> NamedTextColor.GREEN;
-            case 'b' -> NamedTextColor.AQUA;
-            case 'c' -> NamedTextColor.RED;
-            case 'd' -> NamedTextColor.LIGHT_PURPLE;
-            case 'e' -> NamedTextColor.YELLOW;
-            case 'f' -> NamedTextColor.WHITE;
-            default -> null;
-        };
+    private Transformation buildHeadOffsetTransform() {
+        return new Transformation(
+            new Vector3f(0.0F, (float) config.nametagOffsetY(), 0.0F),
+            new Quaternionf(),
+            new Vector3f(1.0F, 1.0F, 1.0F),
+            new Quaternionf()
+        );
     }
 
-    public void removePlayer(Player player) {
+    private Scoreboard getScoreboard() {
+        if (scoreboard == null) {
+            scoreboard = Bukkit.getScoreboardManager().getMainScoreboard();
+        }
+        return scoreboard;
+    }
+
+    private Team getOrCreateHideTeam() {
+        if (hideNametagTeam != null) {
+            return hideNametagTeam;
+        }
         Scoreboard sb = getScoreboard();
-        Team team = sb.getTeam(getTeamName(player));
-        if (team != null) {
-            resetTeamAppearance(team);
+        hideNametagTeam = sb.getTeam(HIDE_TEAM_NAME);
+        if (hideNametagTeam == null) {
+            hideNametagTeam = sb.registerNewTeam(HIDE_TEAM_NAME);
         }
-        // Reset custom name
-        player.customName(null);
-        player.setCustomNameVisible(false);
+        hideNametagTeam.setOption(Team.Option.NAME_TAG_VISIBILITY, Team.OptionStatus.NEVER);
+        return hideNametagTeam;
     }
 
-    private void removePlayerTag(Player player) {
-        String teamName = getTeamName(player);
-        Scoreboard sb = getScoreboard();
-        Team team = sb.getTeam(teamName);
-        if (team != null) {
-            resetTeamAppearance(team);
+    private void setVanillaNametagHidden(Player player, boolean hidden) {
+        if (!config.nametagHideVanillaNametag()) {
+            return;
         }
-        // Reset custom name
-        player.customName(null);
-        player.setCustomNameVisible(false);
-    }
-
-    private Team getOrCreateTeam(Player player) {
-        String teamName = getTeamName(player);
-        Scoreboard sb = getScoreboard();
-        Team team = sb.getTeam(teamName);
-        if (team == null) {
-            team = sb.registerNewTeam(teamName);
+        Team team = getOrCreateHideTeam();
+        if (hidden) {
+            team.addEntity(player);
+            return;
         }
-        return team;
+        team.removeEntity(player);
     }
 
-    private String getTeamName(Player player) {
-        return "ht_" + player.getUniqueId().toString().substring(0, 12);
-    }
-
-    private boolean isHippoTeam(Team team) {
-        return team.getName().startsWith("ht_");
-    }
-
-    // Keep the player bound to their dedicated team to avoid client crashes when the
-    // client scoreboard state is temporarily out of sync with the server removal packet.
-    private void resetTeamAppearance(Team team) {
-        team.prefix(Component.empty());
-        team.suffix(Component.empty());
-        team.color(NamedTextColor.WHITE);
-    }
-
-    private boolean isCurrentTeamMember(Team team, Player player) {
-        return getScoreboard().getEntityTeam(player) == team;
-    }
-
-    public void cleanup() {
-        stop();
-    }
-
-    public void pruneUnusedTeams() {
-        Scoreboard sb = getScoreboard();
-        Set<String> preservedTeams = new HashSet<>();
-
-        for (Player player : Bukkit.getOnlinePlayers()) {
-            preservedTeams.add(getTeamName(player));
-
-            Team currentTeam = sb.getEntityTeam(player);
-            if (currentTeam != null && isHippoTeam(currentTeam)) {
-                preservedTeams.add(currentTeam.getName());
-            }
+    private void restoreVanillaNametags() {
+        if (hideNametagTeam == null) {
+            return;
         }
-
-        for (Team team : sb.getTeams()) {
-            if (!isHippoTeam(team) || preservedTeams.contains(team.getName())) {
-                continue;
-            }
-            team.unregister();
-        }
+        hideNametagTeam.unregister();
+        hideNametagTeam = null;
     }
 }
