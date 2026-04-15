@@ -101,9 +101,13 @@ public final class BelowNameService {
             return;
         }
 
+        boolean hasVisibleEntry = false;
         for (Player player : Bukkit.getOnlinePlayers()) {
-            updatePlayer(player);
+            if (updatePlayerInternal(player)) {
+                hasVisibleEntry = true;
+            }
         }
+        setBelowNameVisible(hasVisibleEntry);
     }
 
     public void updatePlayer(Player player) {
@@ -117,34 +121,87 @@ public final class BelowNameService {
             return;
         }
 
+        updatePlayerInternal(player);
+        refreshDisplaySlot();
+    }
+
+    private boolean updatePlayerInternal(Player player) {
+        String entry = player.getName();
+
         if (config.belownameDisableIf() != null
             && !config.belownameDisableIf().isBlank()
             && conditionParser.evaluate(player, config.belownameDisableIf())) {
-            objective.getScore(player).resetScore();
-            return;
+            clearScore(entry);
+            return false;
         }
 
         // Get value from placeholder
         String valueStr = placeholderService.apply(player, config.belownameValue());
+        if (valueStr == null || valueStr.isBlank()) {
+            clearScore(entry);
+            return false;
+        }
         
         // Parse as number
-        int value = 0;
         try {
             // Remove any non-numeric characters except decimal point and minus
             String cleaned = valueStr.replaceAll("[^0-9.\\-]", "");
-            if (!cleaned.isEmpty()) {
-                value = (int) Math.round(Double.parseDouble(cleaned));
+            if (cleaned.isEmpty()) {
+                clearScore(entry);
+                return false;
             }
+            int value = (int) Math.round(Double.parseDouble(cleaned));
+            objective.getScore(entry).setScore(value);
+            return true;
         } catch (NumberFormatException e) {
             plugin.getLogger().warning("Could not parse below-name value for " + player.getName() + ": " + valueStr);
+            clearScore(entry);
+            return false;
         }
-
-        objective.getScore(player).setScore(value);
     }
 
     public void removePlayer(Player player) {
         if (objective != null) {
-            objective.getScore(player).resetScore();
+            clearScore(player.getName());
+            refreshDisplaySlot();
+        }
+    }
+
+    private void clearScore(String entry) {
+        objective.getScore(entry).resetScore();
+    }
+
+    private void refreshDisplaySlot() {
+        boolean hasVisibleEntry = false;
+        for (Player online : Bukkit.getOnlinePlayers()) {
+            if (isVisibleForBelowName(online)) {
+                hasVisibleEntry = true;
+                break;
+            }
+        }
+        setBelowNameVisible(hasVisibleEntry);
+    }
+
+    private boolean isVisibleForBelowName(Player player) {
+        if (config.belownameDisableIf() != null
+            && !config.belownameDisableIf().isBlank()
+            && conditionParser.evaluate(player, config.belownameDisableIf())) {
+            return false;
+        }
+
+        String valueStr = placeholderService.apply(player, config.belownameValue());
+        if (valueStr == null || valueStr.isBlank()) {
+            return false;
+        }
+
+        String cleaned = valueStr.replaceAll("[^0-9.\\-]", "");
+        return !cleaned.isEmpty();
+    }
+
+    private void setBelowNameVisible(boolean visible) {
+        DisplaySlot expected = visible ? DisplaySlot.BELOW_NAME : null;
+        if (objective.getDisplaySlot() != expected) {
+            objective.setDisplaySlot(expected);
         }
     }
 }
