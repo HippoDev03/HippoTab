@@ -2,14 +2,17 @@ package net.mwtw.hippoTab.service;
 
 import com.github.retrooper.packetevents.PacketEvents;
 import com.github.retrooper.packetevents.protocol.player.GameMode;
+import com.github.retrooper.packetevents.protocol.player.TextureProperty;
 import com.github.retrooper.packetevents.protocol.player.UserProfile;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerPlayerInfoRemove;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerPlayerInfoUpdate;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
+import net.kyori.adventure.text.serializer.gson.GsonComponentSerializer;
 import net.mwtw.hippoTab.config.RedisSyncConfig;
 import net.mwtw.hippoTab.config.TabConfig;
 import net.mwtw.hippoTab.text.TabTextFormatter;
+import com.destroystokyo.paper.profile.ProfileProperty;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -32,7 +35,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class RedisTabSyncService {
-    private static final PlainTextComponentSerializer PLAIN_TEXT = PlainTextComponentSerializer.plainText();
+    private static final GsonComponentSerializer GSON_COMPONENT = GsonComponentSerializer.gson();
     private static final int ORDER_BASE = 1_000_000;
     private static final int ORDER_MIN = 0;
     private static final int ORDER_MAX = 2_000_000;
@@ -146,8 +149,15 @@ public final class RedisTabSyncService {
             Component listName = config.playerListNameFormat() != null && !config.playerListNameFormat().isBlank()
                 ? formatter.toComponent(player, config.playerListNameFormat())
                 : Component.text(player.getName());
-            String displayName = PLAIN_TEXT.serialize(listName);
-            players.add(new SyncedPlayer(player.getUniqueId(), player.getName(), displayName, order, player.getPing()));
+            String displayName = GSON_COMPONENT.serialize(listName);
+            players.add(new SyncedPlayer(
+                player.getUniqueId(),
+                player.getName(),
+                displayName,
+                order,
+                player.getPing(),
+                copyTextureProperties(player.getPlayerProfile().getProperties())
+            ));
         }
         return players;
     }
@@ -223,12 +233,13 @@ public final class RedisTabSyncService {
                 continue;
             }
             String profileName = remote.name().length() > 16 ? remote.name().substring(0, 16) : remote.name();
+            List<TextureProperty> textureProperties = resolveTextureProperties(remote);
             WrapperPlayServerPlayerInfoUpdate.PlayerInfo info = new WrapperPlayServerPlayerInfoUpdate.PlayerInfo(
-                new UserProfile(remote.uuid(), profileName),
+                new UserProfile(remote.uuid(), profileName, textureProperties),
                 true,
                 Math.max(0, remote.ping()),
                 GameMode.SURVIVAL,
-                remote.displayName() == null || remote.displayName().isBlank() ? null : Component.text(remote.displayName()),
+                deserializeDisplayName(remote.displayName()),
                 null,
                 clamp(remote.listOrder(), ORDER_MIN, ORDER_MAX)
             );
@@ -303,7 +314,11 @@ public final class RedisTabSyncService {
     }
 
     private String serializePlayer(SyncedPlayer player) {
-        return encode(player.name()) + "|" + player.listOrder() + "|" + player.ping() + "|" + encode(player.displayName());
+        return encode(player.name())
+            + "|" + player.listOrder()
+            + "|" + player.ping()
+            + "|" + encode(player.displayName())
+            + "|" + encode(serializeTextureProperties(player.textureProperties()));
     }
 
     private SyncedPlayer deserializePlayer(String uuidRaw, String raw) {
@@ -311,8 +326,8 @@ public final class RedisTabSyncService {
             return null;
         }
 
-        String[] parts = raw.split("\\|", 4);
-        if (parts.length != 4) {
+        String[] parts = raw.split("\\|", 5);
+        if (parts.length < 4) {
             return null;
         }
         try {
@@ -321,10 +336,141 @@ public final class RedisTabSyncService {
             int listOrder = Integer.parseInt(parts[1]);
             int ping = Integer.parseInt(parts[2]);
             String displayName = decode(parts[3]);
-            return new SyncedPlayer(uuid, name, displayName, listOrder, ping);
+            List<TexturePropertyData> textureProperties = parts.length == 5
+                ? deserializeTextureProperties(decode(parts[4]))
+                : List.of();
+            return new SyncedPlayer(uuid, name, displayName, listOrder, ping, textureProperties);
         } catch (Exception ignored) {
             return null;
         }
+    }
+
+    private Component deserializeDisplayName(String rawDisplayName) {
+        if (rawDisplayName == null || rawDisplayName.isBlank()) {
+            return null;
+        }
+        try {
+            return GSON_COMPONENT.deserialize(rawDisplayName);
+        } catch (Exception ignored) {
+            return Component.text(rawDisplayName);
+        }
+    }
+
+    private List<TextureProperty> resolveTextureProperties(SyncedPlayer remote) {
+        List<TextureProperty> fromPayload = toPacketTextureProperties(remote.textureProperties());
+        if (!fromPayload.isEmpty()) {
+            return fromPayload;
+        }
+
+        List<TexturePropertyData> offlineProfileProperties = new ArrayList<>();
+        appendOfflineProfileProperties(offlineProfileProperties, Bukkit.getOfflinePlayer(remote.uuid()));
+        if (offlineProfileProperties.isEmpty() && remote.name() != null && !remote.name().isBlank()) {
+            appendOfflineProfileProperties(offlineProfileProperties, Bukkit.getOfflinePlayer(remote.name()));
+        }
+        return toPacketTextureProperties(offlineProfileProperties);
+    }
+
+    private void appendOfflineProfileProperties(List<TexturePropertyData> out, OfflinePlayer offlinePlayer) {
+        if (offlinePlayer == null || offlinePlayer.getPlayerProfile() == null) {
+            return;
+        }
+        Set<String> seen = new HashSet<>();
+        for (TexturePropertyData existing : out) {
+            seen.add(texturePropertyKey(existing.name(), existing.value(), existing.signature()));
+        }
+        for (ProfileProperty property : offlinePlayer.getPlayerProfile().getProperties()) {
+            String name = property.getName();
+            String value = property.getValue();
+            if (name == null || name.isBlank() || value == null || value.isBlank()) {
+                continue;
+            }
+            String signature = property.getSignature();
+            String key = texturePropertyKey(name, value, signature);
+            if (seen.add(key)) {
+                out.add(new TexturePropertyData(name, value, signature));
+            }
+        }
+    }
+
+    private List<TexturePropertyData> copyTextureProperties(Collection<ProfileProperty> properties) {
+        if (properties == null || properties.isEmpty()) {
+            return List.of();
+        }
+        List<TexturePropertyData> copied = new ArrayList<>();
+        for (ProfileProperty property : properties) {
+            if (property.getName() == null || property.getName().isBlank()
+                || property.getValue() == null || property.getValue().isBlank()) {
+                continue;
+            }
+            copied.add(new TexturePropertyData(property.getName(), property.getValue(), property.getSignature()));
+        }
+        return copied.isEmpty() ? List.of() : List.copyOf(copied);
+    }
+
+    private List<TextureProperty> toPacketTextureProperties(List<TexturePropertyData> properties) {
+        if (properties == null || properties.isEmpty()) {
+            return List.of();
+        }
+        List<TextureProperty> converted = new ArrayList<>();
+        for (TexturePropertyData property : properties) {
+            if (property.name() == null || property.name().isBlank()
+                || property.value() == null || property.value().isBlank()) {
+                continue;
+            }
+            converted.add(new TextureProperty(property.name(), property.value(), blankToNull(property.signature())));
+        }
+        return converted.isEmpty() ? List.of() : List.copyOf(converted);
+    }
+
+    private String serializeTextureProperties(List<TexturePropertyData> properties) {
+        if (properties == null || properties.isEmpty()) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (TexturePropertyData property : properties) {
+            if (property.name() == null || property.name().isBlank()
+                || property.value() == null || property.value().isBlank()) {
+                continue;
+            }
+            if (!builder.isEmpty()) {
+                builder.append(';');
+            }
+            builder.append(encode(property.name()))
+                .append(',')
+                .append(encode(property.value()))
+                .append(',')
+                .append(encode(property.signature() == null ? "" : property.signature()));
+        }
+        return builder.toString();
+    }
+
+    private List<TexturePropertyData> deserializeTextureProperties(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        List<TexturePropertyData> properties = new ArrayList<>();
+        String[] encodedProperties = raw.split(";");
+        for (String encodedProperty : encodedProperties) {
+            if (encodedProperty == null || encodedProperty.isBlank()) {
+                continue;
+            }
+            String[] encodedParts = encodedProperty.split(",", 3);
+            if (encodedParts.length != 3) {
+                continue;
+            }
+            String name = decode(encodedParts[0]);
+            String value = decode(encodedParts[1]);
+            String signature = decode(encodedParts[2]);
+            if (name.isBlank() || value.isBlank()) {
+                continue;
+            }
+            properties.add(new TexturePropertyData(name, value, signature.isBlank() ? null : signature));
+        }
+        return properties.isEmpty() ? List.of() : List.copyOf(properties);
+    }
+
+    private String texturePropertyKey(String name, String value, String signature) {
+        return name + '\u0000' + value + '\u0000' + (signature == null ? "" : signature);
     }
 
     private String serversKey() {
@@ -356,6 +502,16 @@ public final class RedisTabSyncService {
         return Math.max(min, Math.min(max, value));
     }
 
-    private record SyncedPlayer(UUID uuid, String name, String displayName, int listOrder, int ping) {
+    private record SyncedPlayer(
+        UUID uuid,
+        String name,
+        String displayName,
+        int listOrder,
+        int ping,
+        List<TexturePropertyData> textureProperties
+    ) {
+    }
+
+    private record TexturePropertyData(String name, String value, String signature) {
     }
 }
