@@ -34,6 +34,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+import static net.mwtw.hippoTab.Core.ERROR_TRACKER;
+
 public final class RedisTabSyncService {
     private static final GsonComponentSerializer GSON_COMPONENT = GsonComponentSerializer.gson();
     private static final int ORDER_BASE = 1_000_000;
@@ -139,6 +141,7 @@ public final class RedisTabSyncService {
             latestRemotePlayers = readRemotePlayers(jedis);
         } catch (Exception exception) {
             plugin.getLogger().warning("Redis tab sync error: " + exception.getMessage());
+            ERROR_TRACKER.trackError(exception);
         }
     }
 

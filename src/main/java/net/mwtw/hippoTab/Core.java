@@ -1,5 +1,7 @@
 package net.mwtw.hippoTab;
 
+import dev.faststats.bukkit.BukkitMetrics;
+import dev.faststats.core.ErrorTracker;
 import net.mwtw.hippoTab.command.HippoTabCommand;
 import net.mwtw.hippoTab.config.TabConfig;
 import net.mwtw.hippoTab.listener.PlayerConnectionListener;
@@ -14,6 +16,13 @@ import org.bukkit.plugin.java.JavaPlugin;
 import java.io.File;
 
 public final class Core extends JavaPlugin {
+    public static final ErrorTracker ERROR_TRACKER = ErrorTracker.contextAware();
+
+    private final BukkitMetrics metrics = BukkitMetrics.factory()
+        .token("590c4db165c1f8ad6d89b3e2a0b4fa07")
+        .errorTracker(ERROR_TRACKER)
+        .create(this);
+
     private TabService tabService;
     private NameTagService nameTagService;
     private BelowNameService belowNameService;
@@ -26,6 +35,7 @@ public final class Core extends JavaPlugin {
 
     @Override
     public void onEnable() {
+        metrics.ready();
         saveDefaultConfig();
         saveResource("conditional-placeholders.yml", false);
         placeholderService = new PlaceholderService(this);
@@ -45,6 +55,8 @@ public final class Core extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        metrics.shutdown();
+
         if (tabService != null) {
             tabService.stop();
         }

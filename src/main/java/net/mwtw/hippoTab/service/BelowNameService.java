@@ -11,6 +11,8 @@ import org.bukkit.scoreboard.DisplaySlot;
 import org.bukkit.scoreboard.Objective;
 import org.bukkit.scoreboard.Scoreboard;
 
+import static net.mwtw.hippoTab.Core.ERROR_TRACKER;
+
 public final class BelowNameService {
     private static final String OBJECTIVE_NAME = "hippotab_health";
 
@@ -61,6 +63,7 @@ public final class BelowNameService {
             objective.setDisplaySlot(DisplaySlot.BELOW_NAME);
         } catch (Exception e) {
             plugin.getLogger().warning("Failed to create below-name objective: " + e.getMessage());
+            ERROR_TRACKER.trackError(e);
         }
     }
 
