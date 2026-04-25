@@ -262,6 +262,7 @@ public final class SidebarScoreboardService {
             targetBelow.displayName(sourceBelow.displayName());
             targetBelow.setRenderType(sourceBelow.getRenderType());
         }
+        targetBelow.numberFormat(sourceBelow.numberFormat());
         targetBelow.setDisplaySlot(DisplaySlot.BELOW_NAME);
 
         for (String entry : targetBoard.getEntries()) {
@@ -273,6 +274,7 @@ public final class SidebarScoreboardService {
         for (String entry : mainBoard.getEntries()) {
             if (sourceBelow.getScore(entry).isScoreSet()) {
                 targetBelow.getScore(entry).setScore(sourceBelow.getScore(entry).getScore());
+                targetBelow.getScore(entry).numberFormat(sourceBelow.getScore(entry).numberFormat());
             }
         }
     }

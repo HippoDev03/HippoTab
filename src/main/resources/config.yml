@@ -38,13 +38,16 @@ belowname:
   enabled: true
   # Update interval in ticks (20 ticks = 1 second)
   update-interval-ticks: 20
-  # Label shown before the value
-  format: "<red>❤"
-  # The value to display (supports placeholders)
-  # Examples: "%player_health%", "%player_level%", "%statistic_player_kills%"
+  # Static objective title shown above the below-name value.
+  title: "<red>❤"
+  # Numeric fallback value (still required by scoreboard internals).
   value: "%player_health%"
+  # Fancy text value shown instead of the raw number on modern Paper versions.
+  fancy-value: "<red>%player_health%"
+  # Used when fancy-value resolves to empty.
+  fancy-value-default: "<gray>NPC"
   # Optional: disable in specific conditions
-  disable-if: ""
+  disable-condition: ""
 
 scoreboard:
   enabled: false

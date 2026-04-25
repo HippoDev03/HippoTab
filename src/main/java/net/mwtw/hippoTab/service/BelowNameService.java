@@ -1,5 +1,6 @@
 package net.mwtw.hippoTab.service;
 
+import io.papermc.paper.scoreboard.numbers.NumberFormat;
 import net.mwtw.hippoTab.config.TabConfig;
 import net.mwtw.hippoTab.text.TabTextFormatter;
 import org.bukkit.Bukkit;
@@ -9,6 +10,7 @@ import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.scoreboard.Criteria;
 import org.bukkit.scoreboard.DisplaySlot;
 import org.bukkit.scoreboard.Objective;
+import org.bukkit.scoreboard.Score;
 import org.bukkit.scoreboard.Scoreboard;
 
 import static net.mwtw.hippoTab.Core.ERROR_TRACKER;
@@ -58,7 +60,7 @@ public final class BelowNameService {
             objective = sb.registerNewObjective(
                 OBJECTIVE_NAME,
                 Criteria.DUMMY,
-                formatter.toComponent(null, config.belownameFormat())
+                formatter.toComponent(null, config.belownameTitle())
             );
             objective.setDisplaySlot(DisplaySlot.BELOW_NAME);
         } catch (Exception e) {
@@ -131,9 +133,9 @@ public final class BelowNameService {
     private boolean updatePlayerInternal(Player player) {
         String entry = player.getName();
 
-        if (config.belownameDisableIf() != null
-            && !config.belownameDisableIf().isBlank()
-            && conditionParser.evaluate(player, config.belownameDisableIf())) {
+        if (config.belownameDisableCondition() != null
+            && !config.belownameDisableCondition().isBlank()
+            && conditionParser.evaluate(player, config.belownameDisableCondition())) {
             clearScore(entry);
             return false;
         }
@@ -154,7 +156,9 @@ public final class BelowNameService {
                 return false;
             }
             int value = (int) Math.round(Double.parseDouble(cleaned));
-            objective.getScore(entry).setScore(value);
+            Score score = objective.getScore(entry);
+            score.setScore(value);
+            applyFancyNumberFormat(player, score);
             return true;
         } catch (NumberFormatException e) {
             plugin.getLogger().warning("Could not parse below-name value for " + player.getName() + ": " + valueStr);
@@ -186,9 +190,9 @@ public final class BelowNameService {
     }
 
     private boolean isVisibleForBelowName(Player player) {
-        if (config.belownameDisableIf() != null
-            && !config.belownameDisableIf().isBlank()
-            && conditionParser.evaluate(player, config.belownameDisableIf())) {
+        if (config.belownameDisableCondition() != null
+            && !config.belownameDisableCondition().isBlank()
+            && conditionParser.evaluate(player, config.belownameDisableCondition())) {
             return false;
         }
 
@@ -206,5 +210,24 @@ public final class BelowNameService {
         if (objective.getDisplaySlot() != expected) {
             objective.setDisplaySlot(expected);
         }
+    }
+
+    private void applyFancyNumberFormat(Player player, Score score) {
+        String fancyValue = config.belownameFancyValue();
+        if (fancyValue == null || fancyValue.isBlank()) {
+            score.numberFormat(null);
+            return;
+        }
+
+        String rendered = placeholderService.apply(player, fancyValue);
+        if (rendered == null || rendered.isBlank()) {
+            rendered = config.belownameFancyValueDefault();
+        }
+        if (rendered == null || rendered.isBlank()) {
+            score.numberFormat(null);
+            return;
+        }
+
+        score.numberFormat(NumberFormat.fixed(formatter.toComponent(player, rendered)));
     }
 }

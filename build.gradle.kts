@@ -28,6 +28,7 @@ java {
 tasks {
     shadowJar {
         archiveClassifier.set("")
+        duplicatesStrategy = org.gradle.api.file.DuplicatesStrategy.EXCLUDE
         relocate("dev.faststats", "${rootProject.group}.hippoTab.libs.faststats")
         relocate("redis.clients", "net.mwtw.hippoTab.libs.redis.clients")
         relocate("org.apache.commons.pool2", "net.mwtw.hippoTab.libs.org.apache.commons.pool2")

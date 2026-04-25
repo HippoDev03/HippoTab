@@ -25,9 +25,11 @@ public record TabConfig(
     String nametagDisableIf,
     boolean belownameEnabled,
     long belownameUpdateIntervalTicks,
-    String belownameFormat,
+    String belownameTitle,
     String belownameValue,
-    String belownameDisableIf,
+    String belownameFancyValue,
+    String belownameFancyValueDefault,
+    String belownameDisableCondition,
     boolean scoreboardEnabled,
     long scoreboardUpdateIntervalTicks,
     boolean scoreboardHideNumber,
@@ -58,9 +60,17 @@ public record TabConfig(
 
         boolean belownameEnabled = config.getBoolean("belowname.enabled", true);
         long belownameUpdateIntervalTicks = Math.max(1L, config.getLong("belowname.update-interval-ticks", 20L));
-        String belownameFormat = config.getString("belowname.format", "<red>❤");
+        String belownameTitle = config.getString(
+            "belowname.title",
+            config.getString("belowname.format", "<red>❤")
+        );
         String belownameValue = config.getString("belowname.value", "%player_health%");
-        String belownameDisableIf = config.getString("belowname.disable-if", "");
+        String belownameFancyValue = config.getString("belowname.fancy-value", "<red>%player_health%");
+        String belownameFancyValueDefault = config.getString("belowname.fancy-value-default", "<gray>NPC");
+        String belownameDisableCondition = config.getString(
+            "belowname.disable-condition",
+            config.getString("belowname.disable-if", "")
+        );
         boolean scoreboardEnabled = config.getBoolean("scoreboard.enabled", false);
         long scoreboardUpdateIntervalTicks = Math.max(1L, config.getLong("scoreboard.update-interval-ticks", 20L));
         boolean scoreboardHideNumber = config.getBoolean("scoreboard.hide-number", false);
@@ -84,9 +94,11 @@ public record TabConfig(
             nametagDisableIf,
             belownameEnabled,
             belownameUpdateIntervalTicks,
-            belownameFormat,
+            belownameTitle,
             belownameValue,
-            belownameDisableIf,
+            belownameFancyValue,
+            belownameFancyValueDefault,
+            belownameDisableCondition,
             scoreboardEnabled,
             scoreboardUpdateIntervalTicks,
             scoreboardHideNumber,
@@ -115,9 +127,11 @@ public record TabConfig(
             nametagDisableIf,
             belownameEnabled,
             belownameUpdateIntervalTicks,
-            belownameFormat,
+            belownameTitle,
             belownameValue,
-            belownameDisableIf,
+            belownameFancyValue,
+            belownameFancyValueDefault,
+            belownameDisableCondition,
             scoreboardEnabled,
             scoreboardUpdateIntervalTicks,
             scoreboardHideNumber,
