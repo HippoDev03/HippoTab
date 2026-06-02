@@ -5,8 +5,8 @@ import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.mwtw.hippoTab.service.PlaceholderService;
 import org.bukkit.entity.Player;
 
+import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
 public final class TabTextFormatter {
     private final PlaceholderService placeholderService;
@@ -17,14 +17,14 @@ public final class TabTextFormatter {
     }
 
     public Component toComponent(Player player, String text) {
+        if (text == null || text.isEmpty()) {
+            return Component.empty();
+        }
         return miniMessage.deserialize(toMiniMessageText(player, text));
     }
 
     public Component linesToComponent(Player player, List<String> lines) {
-        String joined = lines.stream()
-            .map(line -> placeholderService.apply(player, line))
-            .collect(Collectors.joining("\n"));
-        return miniMessage.deserialize(toMiniMessageText(joined));
+        return fromMiniMessage(String.join("\n", toMiniMessageLines(player, lines)));
     }
 
     public PlaceholderService getPlaceholderService() {
@@ -32,15 +32,45 @@ public final class TabTextFormatter {
     }
 
     public Component fromMiniMessage(String miniMessageText) {
+        if (miniMessageText == null || miniMessageText.isEmpty()) {
+            return Component.empty();
+        }
         return miniMessage.deserialize(miniMessageText);
     }
 
     public String toMiniMessageText(Player player, String text) {
+        if (text == null || text.isEmpty()) {
+            return "";
+        }
         String withPlaceholders = placeholderService.apply(player, text);
+        if (withPlaceholders == null) {
+            return "";
+        }
         return toMiniMessageText(withPlaceholders);
     }
 
+    public List<String> toMiniMessageLines(Player player, List<String> lines) {
+        if (lines == null || lines.isEmpty()) {
+            return List.of();
+        }
+
+        List<String> sanitized = new ArrayList<>(lines.size());
+        for (String line : lines) {
+            sanitized.add(line == null ? "" : line);
+        }
+
+        List<String> resolved = placeholderService.apply(player, sanitized);
+        List<String> formatted = new ArrayList<>(resolved.size());
+        for (String line : resolved) {
+            formatted.add(toMiniMessageText(line));
+        }
+        return formatted;
+    }
+
     private String toMiniMessageText(String text) {
+        if (text == null || text.isEmpty()) {
+            return "";
+        }
         String withColors = LegacyColorTranslator.toMiniMessage(text);
         return normalizeHexColorTags(withColors);
     }
@@ -51,6 +81,9 @@ public final class TabTextFormatter {
     // - <#&c>/<#§c> -> <red> style named colors
     // - invalid/unresolved <#...> tags are removed so they don't render literally
     private String normalizeHexColorTags(String input) {
+        if (input == null || input.isEmpty()) {
+            return "";
+        }
         StringBuilder out = new StringBuilder(input.length());
         for (int i = 0; i < input.length(); i++) {
             char current = input.charAt(i);

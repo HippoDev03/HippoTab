@@ -10,9 +10,11 @@ import java.util.Map;
 
 public record TabConfig(
     long updateIntervalTicks,
+    boolean tabEnabled,
     List<String> headerLines,
     List<String> footerLines,
     String playerListNameFormat,
+    String tabHidePlayerIf,
     boolean sortingEnabled,
     String rankPlaceholder,
     boolean sortingDescending,
@@ -22,6 +24,9 @@ public record TabConfig(
     long nametagUpdateIntervalTicks,
     String nametagPrefix,
     String nametagSuffix,
+    String nametagNameFormat,
+    boolean nametagReplaceUsernameEnabled,
+    String nametagReplaceUsernameFormat,
     String nametagDisableIf,
     boolean belownameEnabled,
     long belownameUpdateIntervalTicks,
@@ -42,9 +47,11 @@ public record TabConfig(
         FileConfiguration config = plugin.getConfig();
 
         long updateIntervalTicks = Math.max(1L, config.getLong("update-interval-ticks", 40L));
+        boolean tabEnabled = config.getBoolean("tab.enabled", true);
         List<String> headerLines = config.getStringList("tab.header");
         List<String> footerLines = config.getStringList("tab.footer");
         String playerListNameFormat = config.getString("tab.player-list-name", "<gray>%player_name%</gray>");
+        String tabHidePlayerIf = config.getString("tab.hide-player-if", "");
 
         boolean sortingEnabled = config.getBoolean("sorting.enabled", true);
         String rankPlaceholder = config.getString("sorting.rank-placeholder", "%vaultunlocked_weight%");
@@ -56,6 +63,9 @@ public record TabConfig(
         long nametagUpdateIntervalTicks = Math.max(1L, config.getLong("nametag.update-interval-ticks", 40L));
         String nametagPrefix = config.getString("nametag.prefix", "%vaultunlocked_prefix%");
         String nametagSuffix = config.getString("nametag.suffix", "");
+        String nametagNameFormat = config.getString("nametag.name-format", nametagPrefix + "%player_name%" + nametagSuffix);
+        boolean nametagReplaceUsernameEnabled = config.getBoolean("nametag.replace-username.enabled", false);
+        String nametagReplaceUsernameFormat = config.getString("nametag.replace-username.format", "%player_name%");
         String nametagDisableIf = config.getString("nametag.disable-if", "");
 
         boolean belownameEnabled = config.getBoolean("belowname.enabled", true);
@@ -79,9 +89,11 @@ public record TabConfig(
         RedisSyncConfig redisSync = RedisSyncConfig.from(plugin);
         return new TabConfig(
             updateIntervalTicks,
+            tabEnabled,
             headerLines,
             footerLines,
             playerListNameFormat,
+            tabHidePlayerIf,
             sortingEnabled,
             rankPlaceholder,
             sortingDescending,
@@ -91,6 +103,9 @@ public record TabConfig(
             nametagUpdateIntervalTicks,
             nametagPrefix,
             nametagSuffix,
+            nametagNameFormat,
+            nametagReplaceUsernameEnabled,
+            nametagReplaceUsernameFormat,
             nametagDisableIf,
             belownameEnabled,
             belownameUpdateIntervalTicks,
@@ -112,9 +127,11 @@ public record TabConfig(
     public TabConfig withConditionalPlaceholders(ConfigurationSection config) {
         return new TabConfig(
             updateIntervalTicks,
+            tabEnabled,
             headerLines,
             footerLines,
             playerListNameFormat,
+            tabHidePlayerIf,
             sortingEnabled,
             rankPlaceholder,
             sortingDescending,
@@ -124,6 +141,9 @@ public record TabConfig(
             nametagUpdateIntervalTicks,
             nametagPrefix,
             nametagSuffix,
+            nametagNameFormat,
+            nametagReplaceUsernameEnabled,
+            nametagReplaceUsernameFormat,
             nametagDisableIf,
             belownameEnabled,
             belownameUpdateIntervalTicks,

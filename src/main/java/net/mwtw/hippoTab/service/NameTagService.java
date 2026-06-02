@@ -1,5 +1,10 @@
 package net.mwtw.hippoTab.service;
 
+import com.github.retrooper.packetevents.PacketEvents;
+import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
+import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
+import com.github.retrooper.packetevents.util.adventure.AdventureSerializer;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityMetadata;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.mwtw.hippoTab.config.TabConfig;
@@ -12,15 +17,23 @@ import org.bukkit.scoreboard.Scoreboard;
 import org.bukkit.scoreboard.Team;
 
 import java.util.HashSet;
+import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 public final class NameTagService {
+    private static final String PLAYER_NAME_TOKEN = "%player_name%";
     private final JavaPlugin plugin;
     private final TabConfig config;
     private final TabTextFormatter formatter;
     private final ConditionParser conditionParser;
     private Scoreboard scoreboard;
     private BukkitTask updateTask;
+    private Runnable onTeamsChanged;
+
+    public void setOnTeamsChanged(Runnable callback) {
+        this.onTeamsChanged = callback;
+    }
 
     public NameTagService(JavaPlugin plugin, TabConfig config, TabTextFormatter formatter, ConditionParser conditionParser) {
         this.plugin = plugin;
@@ -39,6 +52,9 @@ public final class NameTagService {
     public void start() {
         if (!config.nametagEnabled()) {
             return;
+        }
+        if (config.nametagReplaceUsernameEnabled() && !isPacketEventsAvailable()) {
+            plugin.getLogger().warning("nametag.replace-username.enabled=true but PacketEvents is not available. Skipping username replacement.");
         }
 
         pruneUnusedTeams();
@@ -66,6 +82,17 @@ public final class NameTagService {
         for (Player player : Bukkit.getOnlinePlayers()) {
             updatePlayer(player);
         }
+        if (onTeamsChanged != null) {
+            onTeamsChanged.run();
+        }
+    }
+
+    public void updateAllNextTick() {
+        if (!config.nametagEnabled()) {
+            return;
+        }
+
+        Bukkit.getScheduler().runTaskLater(plugin, this::updateAll, 1L);
     }
 
     public void updatePlayer(Player player) {
@@ -95,13 +122,13 @@ public final class NameTagService {
             team = getOrCreateTeam(player);
         }
 
-        String resolvedPrefix = formatter.toMiniMessageText(player, config.nametagPrefix());
-        NamedTextColor prefixColor = parseNamedColor(resolvedPrefix);
-        String visiblePrefix = stripTrailingNameColorTokens(resolvedPrefix);
+        NameTagParts nameTagParts = resolveNameTagParts(player);
+        NamedTextColor prefixColor = parseNamedColor(nameTagParts.rawPrefix());
+        String visiblePrefix = stripTrailingNameColorTokens(nameTagParts.rawPrefix());
 
         // Build prefix and suffix components
         Component prefix = formatter.fromMiniMessage(visiblePrefix);
-        Component suffix = formatter.toComponent(player, config.nametagSuffix());
+        Component suffix = formatter.fromMiniMessage(nameTagParts.rawSuffix());
         
         team.prefix(prefix);
         team.suffix(suffix);
@@ -132,25 +159,40 @@ public final class NameTagService {
             }
             team.addEntity(player);
         }
+
+        applyUsernameReplacement(player, true);
     }
 
     public String getFormattedName(Player player) {
-        String prefix = getVisiblePrefixText(player);
-        String suffix = formatter.getPlaceholderService().apply(player, config.nametagSuffix());
-        return prefix + player.getName() + suffix;
+        NameTagParts parts = resolveNameTagParts(player);
+        return stripTrailingNameColorTokens(parts.rawPrefix()) + player.getName() + parts.rawSuffix();
     }
 
     public String getFormattedPrefix(Player player) {
-        return getVisiblePrefixText(player);
+        return stripTrailingNameColorTokens(resolveNameTagParts(player).rawPrefix());
     }
 
     public String getFormattedSuffix(Player player) {
-        return formatter.getPlaceholderService().apply(player, config.nametagSuffix());
+        return resolveNameTagParts(player).rawSuffix();
     }
 
-    private String getVisiblePrefixText(Player player) {
-        String resolvedPrefix = formatter.toMiniMessageText(player, config.nametagPrefix());
-        return stripTrailingNameColorTokens(resolvedPrefix);
+    private NameTagParts resolveNameTagParts(Player player) {
+        String rawFormat = config.nametagNameFormat();
+        if (rawFormat == null || rawFormat.isBlank()) {
+            rawFormat = config.nametagPrefix() + PLAYER_NAME_TOKEN + config.nametagSuffix();
+        }
+
+        int playerNameIndex = rawFormat.indexOf(PLAYER_NAME_TOKEN);
+        if (playerNameIndex < 0) {
+            return new NameTagParts(formatter.toMiniMessageText(player, rawFormat), "");
+        }
+
+        String rawPrefix = rawFormat.substring(0, playerNameIndex);
+        String rawSuffix = rawFormat.substring(playerNameIndex + PLAYER_NAME_TOKEN.length())
+            .replace(PLAYER_NAME_TOKEN, "");
+        String prefix = formatter.toMiniMessageText(player, rawPrefix);
+        String suffix = formatter.toMiniMessageText(player, rawSuffix);
+        return new NameTagParts(prefix, suffix);
     }
 
     private NamedTextColor parseNamedColor(String processed) {
@@ -472,6 +514,7 @@ public final class NameTagService {
         if (team != null) {
             resetTeamAppearance(team);
         }
+        applyUsernameReplacement(player, false);
         // Reset custom name
         player.customName(null);
         player.setCustomNameVisible(false);
@@ -484,9 +527,60 @@ public final class NameTagService {
         if (team != null) {
             resetTeamAppearance(team);
         }
+        applyUsernameReplacement(player, false);
         // Reset custom name
         player.customName(null);
         player.setCustomNameVisible(false);
+    }
+
+    private void applyUsernameReplacement(Player player, boolean enabled) {
+        if (!config.nametagReplaceUsernameEnabled() || !isPacketEventsAvailable()) {
+            return;
+        }
+
+        Component nameComponent = null;
+        if (enabled) {
+            String format = config.nametagReplaceUsernameFormat();
+            if (format != null && !format.isBlank()) {
+                String rendered = formatter.toMiniMessageText(player, format);
+                if (!rendered.isBlank()) {
+                    nameComponent = formatter.fromMiniMessage(rendered);
+                }
+            }
+        }
+
+        String customNameJson = nameComponent == null ? null : AdventureSerializer.toJson(nameComponent);
+        boolean hasCustomName = customNameJson != null && !customNameJson.isBlank();
+        List<EntityData<?>> metadata = hasCustomName
+            ? List.of(
+                new EntityData<>(2, EntityDataTypes.OPTIONAL_COMPONENT, Optional.of(customNameJson)),
+                new EntityData<>(3, EntityDataTypes.BOOLEAN, true)
+            )
+            : List.of(
+                new EntityData<>(2, EntityDataTypes.OPTIONAL_COMPONENT, Optional.empty()),
+                new EntityData<>(3, EntityDataTypes.BOOLEAN, false)
+            );
+
+        WrapperPlayServerEntityMetadata packet = new WrapperPlayServerEntityMetadata(player.getEntityId(), metadata);
+        for (Player viewer : Bukkit.getOnlinePlayers()) {
+            if (viewer == null || !viewer.isOnline() || !viewer.isValid()) {
+                continue;
+            }
+            try {
+                PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer, packet);
+            } catch (RuntimeException exception) {
+                plugin.getLogger().fine(
+                    "Skipped username replacement packet for viewer "
+                        + viewer.getName()
+                        + " due to transient channel state: "
+                        + exception.getClass().getSimpleName()
+                );
+            }
+        }
+    }
+
+    private boolean isPacketEventsAvailable() {
+        return plugin.getServer().getPluginManager().isPluginEnabled("packetevents");
     }
 
     private Team getOrCreateTeam(Player player) {
@@ -517,6 +611,9 @@ public final class NameTagService {
 
     private boolean isCurrentTeamMember(Team team, Player player) {
         return getScoreboard().getEntityTeam(player) == team;
+    }
+
+    private record NameTagParts(String rawPrefix, String rawSuffix) {
     }
 
     public void cleanup() {

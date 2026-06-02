@@ -112,6 +112,7 @@ public final class Core extends JavaPlugin {
         tabService.setNameTagService(nameTagService);
         tabService.setBelowNameService(belowNameService);
         placeholderService.setNameTagService(nameTagService);
+        nameTagService.setOnTeamsChanged(sidebarScoreboardService::markTeamsDirty);
 
         if (playerConnectionListener != null) {
             HandlerList.unregisterAll(playerConnectionListener);
@@ -121,7 +122,8 @@ public final class Core extends JavaPlugin {
             nameTagService,
             belowNameService,
             sidebarScoreboardService,
-            clientTeamStateService
+            clientTeamStateService,
+            redisTabSyncService
         );
         Bukkit.getPluginManager().registerEvents(playerConnectionListener, this);
 

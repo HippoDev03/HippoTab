@@ -12,7 +12,16 @@ public record RedisSyncConfig(
     String keyPrefix,
     String serverId,
     long publishIntervalTicks,
-    int entryTtlSeconds
+    int entryTtlSeconds,
+    boolean velocityRegistryEnabled,
+    String velocityOnlineSetKey,
+    String velocityProfilesHashKey,
+    boolean velocityRequireProfile,
+    String velocityRequiredPermission,
+    boolean velocityUseProfilePrefixForTeam,
+    boolean velocityUseProfileWeightForSorting,
+    boolean teamSyncEnabled,
+    boolean ignoreTeamPacketErrors
 ) {
     public static RedisSyncConfig from(JavaPlugin plugin) {
         String configuredServerId = plugin.getConfig().getString("redis-sync.server-id", "");
@@ -29,7 +38,16 @@ public record RedisSyncConfig(
             plugin.getConfig().getString("redis-sync.key-prefix", "hippotab:tab-sync"),
             serverId,
             Math.max(20L, plugin.getConfig().getLong("redis-sync.publish-interval-ticks", 40L)),
-            Math.max(10, plugin.getConfig().getInt("redis-sync.entry-ttl-seconds", 30))
+            Math.max(10, plugin.getConfig().getInt("redis-sync.entry-ttl-seconds", 30)),
+            plugin.getConfig().getBoolean("redis-sync.velocity-registry.enabled", false),
+            plugin.getConfig().getString("redis-sync.velocity-registry.online-set-key", "hippotab:velocity:online"),
+            plugin.getConfig().getString("redis-sync.velocity-registry.profiles-hash-key", "hippotab:velocity:profiles"),
+            plugin.getConfig().getBoolean("redis-sync.velocity-registry.require-profile", true),
+            plugin.getConfig().getString("redis-sync.velocity-registry.required-permission", ""),
+            plugin.getConfig().getBoolean("redis-sync.velocity-registry.use-profile-prefix-for-team", true),
+            plugin.getConfig().getBoolean("redis-sync.velocity-registry.use-profile-weight-for-sorting", true),
+            plugin.getConfig().getBoolean("redis-sync.team-sync.enabled", false),
+            plugin.getConfig().getBoolean("redis-sync.team-sync.ignore-packet-errors", true)
         );
     }
 }

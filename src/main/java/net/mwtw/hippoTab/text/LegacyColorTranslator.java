@@ -35,6 +35,9 @@ public final class LegacyColorTranslator {
     }
 
     public static String toMiniMessage(String input) {
+        if (input == null || input.isEmpty()) {
+            return "";
+        }
         StringBuilder out = new StringBuilder(input.length() + 16);
 
         for (int i = 0; i < input.length(); i++) {

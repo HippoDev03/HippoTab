@@ -1,6 +1,7 @@
 update-interval-ticks: 40
 
 tab:
+  enabled: true
   header:
     - "<gradient:#63d471:#233329><bold>Hippo Network</bold></gradient>"
     - "&7Welcome, &f%player_name%"
@@ -8,6 +9,9 @@ tab:
     - "&7Online: &f%server_online%"
     - "&7Store: <yellow>store.example.com</yellow>"
   player-list-name: "%vaultunlocked_prefix% &f%player_name%"
+  # If this placeholder/text resolves to true/1/yes/on for a player, that player is hidden from tab list.
+  # Example: "%hippostaff_isvanished%"
+  hide-player-if: ""
 
 sorting:
   enabled: true
@@ -30,6 +34,15 @@ nametag:
   # Suffix shows AFTER the player name
   # Suffix text does not control the player name color.
   suffix: ""
+  # Full name format split by %player_name%.
+  # Example: "%player_name% placehodlers"
+  # If %player_name% is missing, the whole value is treated as prefix.
+  name-format: "%player_name%"
+  # PacketEvents username replacement for overhead nametag middle text.
+  # This is separate from prefix/suffix and requires PacketEvents.
+  replace-username:
+    enabled: false
+    format: "%player_name%"
   # Optional: disable in specific conditions
   # Examples: "world=lobby" or "%arena%=['beast','diamond']" or "world=pvp;%game_mode%=['survival']"
   disable-if: ""
@@ -76,6 +89,27 @@ redis-sync:
   publish-interval-ticks: 40
   # How long each server entry stays alive if it stops publishing.
   entry-ttl-seconds: 30
+  # Optional: validate synced players against a Velocity-published registry in Redis.
+  velocity-registry:
+    enabled: false
+    # Set key of online proxy players. Members must be UUID strings.
+    online-set-key: "hippotab:velocity:online"
+    # Hash key of proxy player profiles. field=UUID, value=base64(name)|base64(prefixMiniMessage)|base64(weight)|base64(perm1,perm2,...)
+    profiles-hash-key: "hippotab:velocity:profiles"
+    # When true, a synced player is dropped if profile entry is missing.
+    require-profile: true
+    # Optional permission that must exist in proxy profile perms to allow tab sync.
+    required-permission: ""
+    # If true, team prefix is overridden from proxy profile prefix.
+    use-profile-prefix-for-team: true
+    # If true, list sorting order uses proxy profile weight.
+    use-profile-weight-for-sorting: true
+  # Team packet sync for remote entries (prefix/suffix/color via scoreboard teams).
+  # Disable this to avoid client "Network Protocol Error" caused by team packet conflicts.
+  team-sync:
+    enabled: false
+    # If true, packet exceptions while syncing teams are ignored.
+    ignore-packet-errors: true
 
 debug:
   # Logs every outgoing HippoTab team packet seen by PacketEvents.
