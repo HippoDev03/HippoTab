@@ -123,7 +123,8 @@ public final class Core extends JavaPlugin {
             belowNameService,
             sidebarScoreboardService,
             clientTeamStateService,
-            redisTabSyncService
+            redisTabSyncService,
+            placeholderService
         );
         Bukkit.getPluginManager().registerEvents(playerConnectionListener, this);
 

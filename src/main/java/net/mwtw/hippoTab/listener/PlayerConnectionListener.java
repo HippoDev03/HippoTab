@@ -3,6 +3,7 @@ package net.mwtw.hippoTab.listener;
 import net.mwtw.hippoTab.service.BelowNameService;
 import net.mwtw.hippoTab.service.ClientTeamStateService;
 import net.mwtw.hippoTab.service.NameTagService;
+import net.mwtw.hippoTab.service.PlaceholderService;
 import net.mwtw.hippoTab.service.RedisTabSyncService;
 import net.mwtw.hippoTab.service.SidebarScoreboardService;
 import net.mwtw.hippoTab.service.TabService;
@@ -24,7 +25,8 @@ public final class PlayerConnectionListener implements Listener {
                                     BelowNameService belowNameService,
                                     SidebarScoreboardService sidebarScoreboardService,
                                     ClientTeamStateService clientTeamStateService,
-                                    RedisTabSyncService redisTabSyncService) {
+                                    RedisTabSyncService redisTabSyncService,
+                                    PlaceholderService placeholderService) {
         this.tabService = tabService;
         this.nameTagService = nameTagService;
         this.belowNameService = belowNameService;
@@ -42,7 +44,7 @@ public final class PlayerConnectionListener implements Listener {
         tabService.applySorting();
         nameTagService.updatePlayer(event.getPlayer());
         nameTagService.updateAllNextTick();
-        belowNameService.updatePlayer(event.getPlayer());
+        belowNameService.onPlayerJoin(event.getPlayer());
         sidebarScoreboardService.updatePlayer(event.getPlayer());
         redisTabSyncService.handleConnectionChange();
     }

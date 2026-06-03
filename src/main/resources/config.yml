@@ -49,8 +49,8 @@ nametag:
 
 belowname:
   enabled: true
-  # Update interval in ticks (20 ticks = 1 second)
-  update-interval-ticks: 20
+  # Update interval in ticks (20 ticks = 1 second). 2-4 ticks recommended for PvP.
+  update-interval-ticks: 2
   # Static objective title shown above the below-name value.
   title: "<red>❤"
   # Numeric fallback value (still required by scoreboard internals).

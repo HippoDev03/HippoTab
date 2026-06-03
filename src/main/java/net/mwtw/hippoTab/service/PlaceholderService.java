@@ -33,20 +33,24 @@ public final class PlaceholderService {
     }
 
     public String apply(Player player, String text) {
-        if (Bukkit.getPluginManager().isPluginEnabled("PlaceholderAPI")) {
-            return PlaceholderAPI.setPlaceholders(player, text);
+        if (!Bukkit.getPluginManager().isPluginEnabled("PlaceholderAPI")) {
+            return text;
         }
-        return text;
+        if (text == null || !text.contains("%")) {
+            return text;
+        }
+        return PlaceholderAPI.setPlaceholders(player, text);
     }
 
     public List<String> apply(Player player, List<String> text) {
         if (text == null || text.isEmpty()) {
             return List.of();
         }
-        if (Bukkit.getPluginManager().isPluginEnabled("PlaceholderAPI")) {
-            return PlaceholderAPI.setPlaceholders(player, text);
+        List<String> result = new ArrayList<>(text.size());
+        for (String line : text) {
+            result.add(apply(player, line));
         }
-        return new ArrayList<>(text);
+        return result;
     }
 
     public void setNameTagService(NameTagService nameTagService) {
