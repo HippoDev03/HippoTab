@@ -92,7 +92,7 @@ public final class BelowNameService {
         // 4. Resolve and broadcast joiner's own score to everyone (including joiner)
         broadcastScore(joiner);
         // 5. Re-resolve on next tick in case health/placeholders weren't ready yet
-        Bukkit.getScheduler().runTask(plugin, () -> {
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             if (joiner.isOnline()) broadcastScore(joiner);
         });
     }
@@ -125,7 +125,7 @@ public final class BelowNameService {
             if (delay == 0) {
                 broadcastScore(p);
             } else {
-                Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                Bukkit.getScheduler().runTaskLaterAsynchronously(plugin, () -> {
                     if (p.isOnline()) broadcastScore(p);
                 }, delay);
             }

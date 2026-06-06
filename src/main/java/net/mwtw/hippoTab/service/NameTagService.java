@@ -92,7 +92,7 @@ public final class NameTagService {
             return;
         }
 
-        Bukkit.getScheduler().runTaskLater(plugin, this::updateAll, 1L);
+        Bukkit.getScheduler().runTaskLaterAsynchronously(plugin, this::updateAll, 1L);
     }
 
     public void updatePlayer(Player player) {

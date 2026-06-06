@@ -116,7 +116,7 @@ public final class TabService {
         }
 
         UUID playerId = player.getUniqueId();
-        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+        Bukkit.getScheduler().runTaskLaterAsynchronously(plugin, () -> {
             Player onlinePlayer = Bukkit.getPlayer(playerId);
             if (onlinePlayer == null || !onlinePlayer.isOnline()) {
                 return;

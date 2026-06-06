@@ -155,7 +155,7 @@ public final class RedisTabSyncService {
             return;
         }
         Bukkit.getScheduler().runTaskLaterAsynchronously(plugin, this::publishAndReadNetworkState, 1L);
-        Bukkit.getScheduler().runTaskLater(plugin, this::applyRemoteEntriesToTab, 2L);
+        Bukkit.getScheduler().runTaskLaterAsynchronously(plugin, this::applyRemoteEntriesToTab, 2L);
     }
 
     private void publishAndReadNetworkState() {
