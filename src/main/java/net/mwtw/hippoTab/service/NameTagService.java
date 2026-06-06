@@ -59,7 +59,7 @@ public final class NameTagService {
 
         pruneUnusedTeams();
         updateAll();
-        updateTask = Bukkit.getScheduler().runTaskTimer(
+        updateTask = Bukkit.getScheduler().runTaskTimerAsynchronously(
             plugin,
             this::updateAll,
             config.nametagUpdateIntervalTicks(),

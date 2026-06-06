@@ -67,7 +67,7 @@ public final class SidebarScoreboardService {
         }
 
         updateAll();
-        updateTask = Bukkit.getScheduler().runTaskTimer(
+        updateTask = Bukkit.getScheduler().runTaskTimerAsynchronously(
             plugin,
             this::updateAll,
             config.scoreboardUpdateIntervalTicks(),

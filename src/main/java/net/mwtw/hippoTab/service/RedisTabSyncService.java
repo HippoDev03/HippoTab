@@ -112,7 +112,7 @@ public final class RedisTabSyncService {
             redisConfig.publishIntervalTicks()
         );
 
-        tabApplyTask = Bukkit.getScheduler().runTaskTimer(
+        tabApplyTask = Bukkit.getScheduler().runTaskTimerAsynchronously(
             plugin,
             this::applyRemoteEntriesToTab,
             10L,

@@ -56,7 +56,7 @@ public final class TabService {
             return;
         }
         refreshAll();
-        updateTask = Bukkit.getScheduler().runTaskTimer(
+        updateTask = Bukkit.getScheduler().runTaskTimerAsynchronously(
             plugin,
             this::refreshAll,
             config.updateIntervalTicks(),

@@ -54,7 +54,7 @@ public final class BelowNameService {
             sendAllScoresTo(p);
             sendDisplayTo(p);
         }
-        updateTask = Bukkit.getScheduler().runTaskTimer(
+        updateTask = Bukkit.getScheduler().runTaskTimerAsynchronously(
             plugin,
             this::updateAll,
             config.belownameUpdateIntervalTicks(),

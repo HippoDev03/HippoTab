@@ -118,6 +118,7 @@ public final class Core extends JavaPlugin {
             HandlerList.unregisterAll(playerConnectionListener);
         }
         playerConnectionListener = new PlayerConnectionListener(
+            this,
             tabService,
             nameTagService,
             belowNameService,
