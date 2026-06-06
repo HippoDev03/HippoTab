@@ -18,8 +18,12 @@ import org.bukkit.scoreboard.Team;
 
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class NameTagService {
     private static final String PLAYER_NAME_TOKEN = "%player_name%";
@@ -30,6 +34,8 @@ public final class NameTagService {
     private Scoreboard scoreboard;
     private BukkitTask updateTask;
     private Runnable onTeamsChanged;
+    private final Map<UUID, NameTagParts> cachedParts = new ConcurrentHashMap<>();
+    private final Map<UUID, String> cachedUsername = new ConcurrentHashMap<>();
 
     public void setOnTeamsChanged(Runnable callback) {
         this.onTeamsChanged = callback;
@@ -72,6 +78,8 @@ public final class NameTagService {
             updateTask.cancel();
             updateTask = null;
         }
+        cachedParts.clear();
+        cachedUsername.clear();
     }
 
     public void updateAll() {
@@ -79,11 +87,31 @@ public final class NameTagService {
             return;
         }
 
-        for (Player player : Bukkit.getOnlinePlayers()) {
-            updatePlayer(player);
+        List<Player> players = List.copyOf(Bukkit.getOnlinePlayers());
+        long interval = config.nametagUpdateIntervalTicks();
+        long spread = Math.min(players.size(), Math.min(5, Math.max(1, interval / 2)));
+
+        long maxDelay = 0;
+        for (int i = 0; i < players.size(); i++) {
+            final Player p = players.get(i);
+            long delay = i % spread;
+            if (delay > maxDelay) maxDelay = delay;
+            if (delay == 0) {
+                updatePlayer(p);
+            } else {
+                Bukkit.getScheduler().runTaskLaterAsynchronously(plugin, () -> {
+                    if (p.isOnline()) updatePlayer(p);
+                }, delay);
+            }
         }
+
         if (onTeamsChanged != null) {
-            onTeamsChanged.run();
+            if (maxDelay == 0) {
+                onTeamsChanged.run();
+            } else {
+                final Runnable cb = onTeamsChanged;
+                Bukkit.getScheduler().runTaskLaterAsynchronously(plugin, cb, maxDelay + 1);
+            }
         }
     }
 
@@ -123,35 +151,26 @@ public final class NameTagService {
         }
 
         NameTagParts nameTagParts = resolveNameTagParts(player);
-        NamedTextColor prefixColor = parseNamedColor(nameTagParts.rawPrefix());
-        String visiblePrefix = stripTrailingNameColorTokens(nameTagParts.rawPrefix());
+        NameTagParts prevParts = cachedParts.get(player.getUniqueId());
+        boolean partsChanged = !Objects.equals(prevParts, nameTagParts);
 
-        // Build prefix and suffix components
-        Component prefix = formatter.fromMiniMessage(visiblePrefix);
-        Component suffix = formatter.fromMiniMessage(nameTagParts.rawSuffix());
-        
-        team.prefix(prefix);
-        team.suffix(suffix);
-        
-        // Determine the player name color
-        // Priority: 1) Last color from prefix, 2) WHITE fallback
-        NamedTextColor teamColor = null;
-        
-        if (prefixColor != null) {
-            teamColor = prefixColor;
+        if (partsChanged) {
+            cachedParts.put(player.getUniqueId(), nameTagParts);
+
+            NamedTextColor prefixColor = parseNamedColor(nameTagParts.rawPrefix());
+            String visiblePrefix = stripTrailingNameColorTokens(nameTagParts.rawPrefix());
+
+            Component prefix = formatter.fromMiniMessage(visiblePrefix);
+            Component suffix = formatter.fromMiniMessage(nameTagParts.rawSuffix());
+
+            team.prefix(prefix);
+            team.suffix(suffix);
+
+            NamedTextColor teamColor = prefixColor != null ? prefixColor : NamedTextColor.WHITE;
+            team.color(teamColor);
+            team.setOption(Team.Option.NAME_TAG_VISIBILITY, Team.OptionStatus.ALWAYS);
         }
-        
-        // Final fallback to WHITE
-        if (teamColor == null) {
-            teamColor = NamedTextColor.WHITE;
-        }
-        
-        // Apply team color to the player name part
-        team.color(teamColor);
-        
-        // Ensure name tags are visible
-        team.setOption(Team.Option.NAME_TAG_VISIBILITY, Team.OptionStatus.ALWAYS);
-        
+
         // Only send an add when the scoreboard is not already mapped to this team.
         if (!isCurrentTeamMember(team, player)) {
             if (!config.nametagAutoAssignTeam()) {
@@ -509,6 +528,8 @@ public final class NameTagService {
     }
 
     public void removePlayer(Player player) {
+        cachedParts.remove(player.getUniqueId());
+        cachedUsername.remove(player.getUniqueId());
         Scoreboard sb = getScoreboard();
         Team team = sb.getTeam(getTeamName(player));
         if (team != null) {
@@ -538,16 +559,25 @@ public final class NameTagService {
             return;
         }
 
+        String renderedUsername = null;
         Component nameComponent = null;
         if (enabled) {
             String format = config.nametagReplaceUsernameFormat();
             if (format != null && !format.isBlank()) {
-                String rendered = formatter.toMiniMessageText(player, format);
-                if (!rendered.isBlank()) {
-                    nameComponent = formatter.fromMiniMessage(rendered);
+                renderedUsername = formatter.toMiniMessageText(player, format);
+                if (!renderedUsername.isBlank()) {
+                    nameComponent = formatter.fromMiniMessage(renderedUsername);
+                } else {
+                    renderedUsername = null;
                 }
             }
         }
+
+        String prevUsername = cachedUsername.get(player.getUniqueId());
+        if (Objects.equals(renderedUsername, prevUsername)) {
+            return;
+        }
+        cachedUsername.put(player.getUniqueId(), renderedUsername);
 
         String customNameJson = nameComponent == null ? null : AdventureSerializer.toJson(nameComponent);
         boolean hasCustomName = customNameJson != null && !customNameJson.isBlank();

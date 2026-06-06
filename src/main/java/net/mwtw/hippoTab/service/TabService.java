@@ -10,6 +10,7 @@ import org.bukkit.scheduler.BukkitTask;
 
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -78,10 +79,30 @@ public final class TabService {
             playerStates.clear();
             return;
         }
-        for (Player player : Bukkit.getOnlinePlayers()) {
-            refreshPlayer(player);
+
+        List<Player> players = List.copyOf(Bukkit.getOnlinePlayers());
+        long interval = config.updateIntervalTicks();
+        long spread = Math.min(players.size(), Math.min(5, Math.max(1, interval / 2)));
+
+        long maxDelay = 0;
+        for (int i = 0; i < players.size(); i++) {
+            final Player p = players.get(i);
+            long delay = i % spread;
+            if (delay > maxDelay) maxDelay = delay;
+            if (delay == 0) {
+                refreshPlayer(p);
+            } else {
+                Bukkit.getScheduler().runTaskLaterAsynchronously(plugin, () -> {
+                    if (p.isOnline()) refreshPlayer(p);
+                }, delay);
+            }
         }
-        syncTabVisibility();
+
+        if (maxDelay == 0) {
+            syncTabVisibility();
+        } else {
+            Bukkit.getScheduler().runTaskLaterAsynchronously(plugin, this::syncTabVisibility, maxDelay + 1);
+        }
     }
 
     public void refreshPlayer(Player player) {
