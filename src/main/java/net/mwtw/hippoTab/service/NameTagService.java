@@ -5,6 +5,7 @@ import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
 import com.github.retrooper.packetevents.util.adventure.AdventureSerializer;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityMetadata;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerTeams;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.mwtw.hippoTab.config.TabConfig;
@@ -13,10 +14,8 @@ import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
-import org.bukkit.scoreboard.Scoreboard;
-import org.bukkit.scoreboard.Team;
 
-import java.util.HashSet;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -31,9 +30,17 @@ public final class NameTagService {
     private final TabConfig config;
     private final TabTextFormatter formatter;
     private final ConditionParser conditionParser;
-    private Scoreboard scoreboard;
     private BukkitTask updateTask;
     private Runnable onTeamsChanged;
+
+    // player UUID → team name currently assigned on clients
+    private final Map<UUID, String> playerTeams = new ConcurrentHashMap<>();
+    // team name → last sent state (prefix/suffix/color)
+    private final Map<String, TeamState> teamStates = new ConcurrentHashMap<>();
+    // viewer UUID → set of team names this viewer has received CREATE for
+    // Used to prevent duplicate CREATE or premature UPDATE (protocol errors)
+    private final Map<UUID, Set<String>> viewerKnownTeams = new ConcurrentHashMap<>();
+    // change detection
     private final Map<UUID, NameTagParts> cachedParts = new ConcurrentHashMap<>();
     private final Map<UUID, String> cachedUsername = new ConcurrentHashMap<>();
 
@@ -48,13 +55,6 @@ public final class NameTagService {
         this.conditionParser = conditionParser;
     }
 
-    private Scoreboard getScoreboard() {
-        if (scoreboard == null) {
-            scoreboard = Bukkit.getScoreboardManager().getMainScoreboard();
-        }
-        return scoreboard;
-    }
-
     public void start() {
         if (!config.nametagEnabled()) {
             return;
@@ -62,8 +62,6 @@ public final class NameTagService {
         if (config.nametagReplaceUsernameEnabled() && !isPacketEventsAvailable()) {
             plugin.getLogger().warning("nametag.replace-username.enabled=true but PacketEvents is not available. Skipping username replacement.");
         }
-
-        pruneUnusedTeams();
         updateAll();
         updateTask = Bukkit.getScheduler().runTaskTimerAsynchronously(
             plugin,
@@ -78,6 +76,12 @@ public final class NameTagService {
             updateTask.cancel();
             updateTask = null;
         }
+        for (String teamName : teamStates.keySet()) {
+            sendRawToAll(new WrapperPlayServerTeams(teamName, WrapperPlayServerTeams.TeamMode.REMOVE, Optional.empty()));
+        }
+        playerTeams.clear();
+        teamStates.clear();
+        viewerKnownTeams.clear();
         cachedParts.clear();
         cachedUsername.clear();
     }
@@ -119,7 +123,6 @@ public final class NameTagService {
         if (!config.nametagEnabled()) {
             return;
         }
-
         Bukkit.getScheduler().runTaskLaterAsynchronously(plugin, this::updateAll, 1L);
     }
 
@@ -133,53 +136,79 @@ public final class NameTagService {
             return;
         }
 
-        Team currentTeam = getScoreboard().getEntityTeam(player);
-        Team team = getScoreboard().getTeam(getTeamName(player));
-
-        if (currentTeam != null && currentTeam != team) {
-            if (!config.nametagAutoAssignTeam() || !isHippoTeam(currentTeam)) {
-                return;
-            }
-            team = currentTeam;
-        }
-
-        if (team == null) {
-            if (!config.nametagAutoAssignTeam()) {
-                return;
-            }
-            team = getOrCreateTeam(player);
-        }
-
         NameTagParts nameTagParts = resolveNameTagParts(player);
         NameTagParts prevParts = cachedParts.get(player.getUniqueId());
         boolean partsChanged = !Objects.equals(prevParts, nameTagParts);
+        boolean alreadyAssigned = playerTeams.containsKey(player.getUniqueId());
 
-        if (partsChanged) {
+        if (partsChanged || !alreadyAssigned) {
             cachedParts.put(player.getUniqueId(), nameTagParts);
 
             NamedTextColor prefixColor = parseNamedColor(nameTagParts.rawPrefix());
             String visiblePrefix = stripTrailingNameColorTokens(nameTagParts.rawPrefix());
-
             Component prefix = formatter.fromMiniMessage(visiblePrefix);
             Component suffix = formatter.fromMiniMessage(nameTagParts.rawSuffix());
+            NamedTextColor color = prefixColor != null ? prefixColor : NamedTextColor.WHITE;
 
-            team.prefix(prefix);
-            team.suffix(suffix);
+            String teamName = getTeamName(player);
+            TeamState state = new TeamState(prefix, suffix, color);
+            teamStates.put(teamName, state);
 
-            NamedTextColor teamColor = prefixColor != null ? prefixColor : NamedTextColor.WHITE;
-            team.color(teamColor);
-            team.setOption(Team.Option.NAME_TAG_VISIBILITY, Team.OptionStatus.ALWAYS);
-        }
-
-        // Only send an add when the scoreboard is not already mapped to this team.
-        if (!isCurrentTeamMember(team, player)) {
-            if (!config.nametagAutoAssignTeam()) {
-                return;
+            if (!alreadyAssigned) {
+                playerTeams.put(player.getUniqueId(), teamName);
+                // Send CREATE or UPDATE depending on whether each viewer already knows this team
+                sendTeamToAllViewers(teamName, state, List.of(player.getName()));
+            } else {
+                // Parts changed — send UPDATE (or CREATE if viewer somehow missed it)
+                sendTeamToAllViewers(teamName, state, List.of(player.getName()));
             }
-            team.addEntity(player);
         }
 
         applyUsernameReplacement(player, true);
+    }
+
+    // Called on join: sends CREATE for all existing teams to the new viewer.
+    // Uses the same known-teams check so there is no duplicate CREATE if updatePlayer
+    // races with this method.
+    public void onPlayerJoin(Player joiner) {
+        if (!config.nametagEnabled()) {
+            return;
+        }
+        for (Map.Entry<String, TeamState> entry : teamStates.entrySet()) {
+            String teamName = entry.getKey();
+            String memberName = getMemberNameForTeam(teamName);
+            List<String> members = memberName != null ? List.of(memberName) : Collections.emptyList();
+            sendTeamToViewer(joiner, teamName, entry.getValue(), members);
+        }
+    }
+
+    public void removePlayer(Player player) {
+        // Drop this player's viewer state — they are leaving
+        viewerKnownTeams.remove(player.getUniqueId());
+        cachedParts.remove(player.getUniqueId());
+        cachedUsername.remove(player.getUniqueId());
+
+        String teamName = playerTeams.remove(player.getUniqueId());
+        if (teamName != null) {
+            teamStates.remove(teamName);
+            removeTeamFromAllViewers(teamName, player.getName());
+        }
+        applyUsernameReplacement(player, false);
+        player.customName(null);
+        player.setCustomNameVisible(false);
+    }
+
+    private void removePlayerTag(Player player) {
+        cachedParts.remove(player.getUniqueId());
+        String teamName = playerTeams.get(player.getUniqueId());
+        if (teamName != null) {
+            TeamState resetState = new TeamState(Component.empty(), Component.empty(), NamedTextColor.WHITE);
+            teamStates.put(teamName, resetState);
+            sendTeamToAllViewers(teamName, resetState, List.of(player.getName()));
+        }
+        applyUsernameReplacement(player, false);
+        player.customName(null);
+        player.setCustomNameVisible(false);
     }
 
     public String getFormattedName(Player player) {
@@ -194,6 +223,158 @@ public final class NameTagService {
     public String getFormattedSuffix(Player player) {
         return resolveNameTagParts(player).rawSuffix();
     }
+
+    public void pruneUnusedTeams() {
+        // No-op: team state is fully managed via packets now
+    }
+
+    // -------------------------------------------------------------------------
+    // Packet helpers — all team sends go through these to prevent protocol errors
+    // -------------------------------------------------------------------------
+
+    /**
+     * Sends team info to a single viewer.
+     * If the viewer already received CREATE for this team → sends UPDATE.
+     * If not → sends CREATE (which also adds the member in one packet).
+     */
+    private void sendTeamToViewer(Player viewer, String teamName, TeamState state, List<String> members) {
+        Set<String> known = viewerKnownTeams.computeIfAbsent(viewer.getUniqueId(), k -> ConcurrentHashMap.newKeySet());
+        WrapperPlayServerTeams.ScoreBoardTeamInfo info = buildTeamInfo(state);
+        if (known.add(teamName)) {
+            sendTo(viewer, new WrapperPlayServerTeams(teamName, WrapperPlayServerTeams.TeamMode.CREATE, Optional.of(info), members));
+        } else {
+            sendTo(viewer, new WrapperPlayServerTeams(teamName, WrapperPlayServerTeams.TeamMode.UPDATE, Optional.of(info), Collections.emptyList()));
+        }
+    }
+
+    /** Sends to all currently online viewers via {@link #sendTeamToViewer}. */
+    private void sendTeamToAllViewers(String teamName, TeamState state, List<String> members) {
+        for (Player viewer : Bukkit.getOnlinePlayers()) {
+            sendTeamToViewer(viewer, teamName, state, members);
+        }
+    }
+
+    /** Sends REMOVE_ENTITIES + REMOVE only to viewers who have received CREATE for this team. */
+    private void removeTeamFromAllViewers(String teamName, String playerName) {
+        WrapperPlayServerTeams removeEntities = new WrapperPlayServerTeams(
+            teamName, WrapperPlayServerTeams.TeamMode.REMOVE_ENTITIES, Optional.empty(), List.of(playerName));
+        WrapperPlayServerTeams removeTeam = new WrapperPlayServerTeams(
+            teamName, WrapperPlayServerTeams.TeamMode.REMOVE, Optional.empty(), Collections.emptyList());
+        for (Player viewer : Bukkit.getOnlinePlayers()) {
+            Set<String> known = viewerKnownTeams.get(viewer.getUniqueId());
+            if (known != null && known.remove(teamName)) {
+                sendTo(viewer, removeEntities);
+                sendTo(viewer, removeTeam);
+            }
+        }
+    }
+
+    private void sendRawToAll(WrapperPlayServerTeams packet) {
+        for (Player viewer : Bukkit.getOnlinePlayers()) {
+            sendTo(viewer, packet);
+        }
+    }
+
+    private void sendTo(Player viewer, WrapperPlayServerTeams packet) {
+        try {
+            PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer, packet);
+        } catch (RuntimeException e) {
+            plugin.getLogger().fine("Skipped team packet for " + viewer.getName() + ": " + e.getClass().getSimpleName());
+        }
+    }
+
+    private String getMemberNameForTeam(String teamName) {
+        for (Map.Entry<UUID, String> entry : playerTeams.entrySet()) {
+            if (teamName.equals(entry.getValue())) {
+                Player p = Bukkit.getPlayer(entry.getKey());
+                return p != null ? p.getName() : null;
+            }
+        }
+        return null;
+    }
+
+    private String getTeamName(Player player) {
+        return "ht_" + player.getUniqueId().toString().substring(0, 12);
+    }
+
+    private WrapperPlayServerTeams.ScoreBoardTeamInfo buildTeamInfo(TeamState state) {
+        return new WrapperPlayServerTeams.ScoreBoardTeamInfo(
+            Component.empty(),
+            state.prefix(),
+            state.suffix(),
+            WrapperPlayServerTeams.NameTagVisibility.ALWAYS,
+            WrapperPlayServerTeams.CollisionRule.ALWAYS,
+            state.color(),
+            WrapperPlayServerTeams.OptionData.NONE
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Username replacement (PacketEvents entity metadata)
+    // -------------------------------------------------------------------------
+
+    private void applyUsernameReplacement(Player player, boolean enabled) {
+        if (!config.nametagReplaceUsernameEnabled() || !isPacketEventsAvailable()) {
+            return;
+        }
+
+        String renderedUsername = null;
+        Component nameComponent = null;
+        if (enabled) {
+            String format = config.nametagReplaceUsernameFormat();
+            if (format != null && !format.isBlank()) {
+                renderedUsername = formatter.toMiniMessageText(player, format);
+                if (!renderedUsername.isBlank()) {
+                    nameComponent = formatter.fromMiniMessage(renderedUsername);
+                } else {
+                    renderedUsername = null;
+                }
+            }
+        }
+
+        String prevUsername = cachedUsername.get(player.getUniqueId());
+        if (Objects.equals(renderedUsername, prevUsername)) {
+            return;
+        }
+        cachedUsername.put(player.getUniqueId(), renderedUsername);
+
+        String customNameJson = nameComponent == null ? null : AdventureSerializer.toJson(nameComponent);
+        boolean hasCustomName = customNameJson != null && !customNameJson.isBlank();
+        List<EntityData<?>> metadata = hasCustomName
+            ? List.of(
+                new EntityData<>(2, EntityDataTypes.OPTIONAL_COMPONENT, Optional.of(customNameJson)),
+                new EntityData<>(3, EntityDataTypes.BOOLEAN, true)
+            )
+            : List.of(
+                new EntityData<>(2, EntityDataTypes.OPTIONAL_COMPONENT, Optional.empty()),
+                new EntityData<>(3, EntityDataTypes.BOOLEAN, false)
+            );
+
+        WrapperPlayServerEntityMetadata packet = new WrapperPlayServerEntityMetadata(player.getEntityId(), metadata);
+        for (Player viewer : Bukkit.getOnlinePlayers()) {
+            if (!viewer.isOnline() || !viewer.isValid()) {
+                continue;
+            }
+            try {
+                PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer, packet);
+            } catch (RuntimeException e) {
+                plugin.getLogger().fine(
+                    "Skipped username replacement packet for viewer "
+                        + viewer.getName()
+                        + " due to transient channel state: "
+                        + e.getClass().getSimpleName()
+                );
+            }
+        }
+    }
+
+    private boolean isPacketEventsAvailable() {
+        return plugin.getServer().getPluginManager().isPluginEnabled("packetevents");
+    }
+
+    // -------------------------------------------------------------------------
+    // Name tag text resolution
+    // -------------------------------------------------------------------------
 
     private NameTagParts resolveNameTagParts(Player player) {
         String rawFormat = config.nametagNameFormat();
@@ -214,13 +395,16 @@ public final class NameTagService {
         return new NameTagParts(prefix, suffix);
     }
 
+    // -------------------------------------------------------------------------
+    // Color parsing
+    // -------------------------------------------------------------------------
+
     private NamedTextColor parseNamedColor(String processed) {
         NamedTextColor lastColor = null;
 
         for (int i = 0; i < processed.length(); i++) {
             char current = processed.charAt(i);
 
-            // Parse MiniMessage-style colors first (these come from PAPI or converted legacy codes)
             if (current == '<') {
                 int end = processed.indexOf('>', i + 1);
                 if (end < 0) {
@@ -245,7 +429,6 @@ public final class NameTagService {
 
             char code = Character.toLowerCase(processed.charAt(i + 1));
 
-            // &#RRGGBB or §#RRGGBB (parse these before legacy codes)
             if (code == '#' && i + 7 < processed.length()) {
                 String hex = processed.substring(i + 2, i + 8);
                 if (isHexColor(hex)) {
@@ -255,7 +438,6 @@ public final class NameTagService {
                 }
             }
 
-            // &x&F&F&0&0&0&0 / §x§F§F§0§0§0§0 (parse these before legacy codes)
             if (code == 'x' && i + 13 < processed.length()) {
                 StringBuilder hex = new StringBuilder(6);
                 boolean valid = true;
@@ -279,7 +461,6 @@ public final class NameTagService {
                 }
             }
 
-            // Legacy color codes (parsed last)
             NamedTextColor legacyColor = getLegacyColor(code);
             if (legacyColor != null) {
                 lastColor = legacyColor;
@@ -295,7 +476,6 @@ public final class NameTagService {
         return lastColor;
     }
 
-    // Removes trailing color-only markers used to color the player name (e.g. "<#29A3DB>", "<red>", "&c").
     private String stripTrailingNameColorTokens(String input) {
         String value = input;
         while (true) {
@@ -472,36 +652,21 @@ public final class NameTagService {
     }
 
     private NamedTextColor findNearestNamedColor(String hex) {
-        // Convert hex to RGB
         int r = Integer.parseInt(hex.substring(0, 2), 16);
         int g = Integer.parseInt(hex.substring(2, 4), 16);
         int b = Integer.parseInt(hex.substring(4, 6), 16);
-        
-        return findNearestNamedColorFromRGB(r, g, b);
-    }
-    
-    private NamedTextColor findNearestNamedColorFromRGB(int r, int g, int b) {
-        // Find closest named color (simple distance calculation)
+
         NamedTextColor closest = NamedTextColor.WHITE;
         double minDistance = Double.MAX_VALUE;
-        
         for (NamedTextColor color : NamedTextColor.NAMES.values()) {
-            int cr = color.red();
-            int cg = color.green();
-            int cb = color.blue();
-            
-            double distance = Math.sqrt(
-                Math.pow(r - cr, 2) + 
-                Math.pow(g - cg, 2) + 
-                Math.pow(b - cb, 2)
-            );
-            
+            double distance = Math.pow(r - color.red(), 2)
+                + Math.pow(g - color.green(), 2)
+                + Math.pow(b - color.blue(), 2);
             if (distance < minDistance) {
                 minDistance = distance;
                 closest = color;
             }
         }
-        
         return closest;
     }
 
@@ -527,147 +692,15 @@ public final class NameTagService {
         };
     }
 
-    public void removePlayer(Player player) {
-        cachedParts.remove(player.getUniqueId());
-        cachedUsername.remove(player.getUniqueId());
-        Scoreboard sb = getScoreboard();
-        Team team = sb.getTeam(getTeamName(player));
-        if (team != null) {
-            resetTeamAppearance(team);
-        }
-        applyUsernameReplacement(player, false);
-        // Reset custom name
-        player.customName(null);
-        player.setCustomNameVisible(false);
-    }
-
-    private void removePlayerTag(Player player) {
-        String teamName = getTeamName(player);
-        Scoreboard sb = getScoreboard();
-        Team team = sb.getTeam(teamName);
-        if (team != null) {
-            resetTeamAppearance(team);
-        }
-        applyUsernameReplacement(player, false);
-        // Reset custom name
-        player.customName(null);
-        player.setCustomNameVisible(false);
-    }
-
-    private void applyUsernameReplacement(Player player, boolean enabled) {
-        if (!config.nametagReplaceUsernameEnabled() || !isPacketEventsAvailable()) {
-            return;
-        }
-
-        String renderedUsername = null;
-        Component nameComponent = null;
-        if (enabled) {
-            String format = config.nametagReplaceUsernameFormat();
-            if (format != null && !format.isBlank()) {
-                renderedUsername = formatter.toMiniMessageText(player, format);
-                if (!renderedUsername.isBlank()) {
-                    nameComponent = formatter.fromMiniMessage(renderedUsername);
-                } else {
-                    renderedUsername = null;
-                }
-            }
-        }
-
-        String prevUsername = cachedUsername.get(player.getUniqueId());
-        if (Objects.equals(renderedUsername, prevUsername)) {
-            return;
-        }
-        cachedUsername.put(player.getUniqueId(), renderedUsername);
-
-        String customNameJson = nameComponent == null ? null : AdventureSerializer.toJson(nameComponent);
-        boolean hasCustomName = customNameJson != null && !customNameJson.isBlank();
-        List<EntityData<?>> metadata = hasCustomName
-            ? List.of(
-                new EntityData<>(2, EntityDataTypes.OPTIONAL_COMPONENT, Optional.of(customNameJson)),
-                new EntityData<>(3, EntityDataTypes.BOOLEAN, true)
-            )
-            : List.of(
-                new EntityData<>(2, EntityDataTypes.OPTIONAL_COMPONENT, Optional.empty()),
-                new EntityData<>(3, EntityDataTypes.BOOLEAN, false)
-            );
-
-        WrapperPlayServerEntityMetadata packet = new WrapperPlayServerEntityMetadata(player.getEntityId(), metadata);
-        for (Player viewer : Bukkit.getOnlinePlayers()) {
-            if (viewer == null || !viewer.isOnline() || !viewer.isValid()) {
-                continue;
-            }
-            try {
-                PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer, packet);
-            } catch (RuntimeException exception) {
-                plugin.getLogger().fine(
-                    "Skipped username replacement packet for viewer "
-                        + viewer.getName()
-                        + " due to transient channel state: "
-                        + exception.getClass().getSimpleName()
-                );
-            }
-        }
-    }
-
-    private boolean isPacketEventsAvailable() {
-        return plugin.getServer().getPluginManager().isPluginEnabled("packetevents");
-    }
-
-    private Team getOrCreateTeam(Player player) {
-        String teamName = getTeamName(player);
-        Scoreboard sb = getScoreboard();
-        Team team = sb.getTeam(teamName);
-        if (team == null) {
-            team = sb.registerNewTeam(teamName);
-        }
-        return team;
-    }
-
-    private String getTeamName(Player player) {
-        return "ht_" + player.getUniqueId().toString().substring(0, 12);
-    }
-
-    private boolean isHippoTeam(Team team) {
-        return team.getName().startsWith("ht_");
-    }
-
-    // Keep the player bound to their dedicated team to avoid client crashes when the
-    // client scoreboard state is temporarily out of sync with the server removal packet.
-    private void resetTeamAppearance(Team team) {
-        team.prefix(Component.empty());
-        team.suffix(Component.empty());
-        team.color(NamedTextColor.WHITE);
-    }
-
-    private boolean isCurrentTeamMember(Team team, Player player) {
-        return getScoreboard().getEntityTeam(player) == team;
-    }
-
-    private record NameTagParts(String rawPrefix, String rawSuffix) {
-    }
-
     public void cleanup() {
         stop();
     }
 
-    public void pruneUnusedTeams() {
-        Scoreboard sb = getScoreboard();
-        Set<String> preservedTeams = new HashSet<>();
+    // -------------------------------------------------------------------------
+    // Records
+    // -------------------------------------------------------------------------
 
-        for (Player player : Bukkit.getOnlinePlayers()) {
-            preservedTeams.add(getTeamName(player));
+    private record NameTagParts(String rawPrefix, String rawSuffix) {}
 
-            Team currentTeam = sb.getEntityTeam(player);
-            if (currentTeam != null && isHippoTeam(currentTeam)) {
-                preservedTeams.add(currentTeam.getName());
-            }
-        }
-
-        for (Team team : sb.getTeams()) {
-            if (!isHippoTeam(team) || preservedTeams.contains(team.getName())) {
-                continue;
-            }
-            team.unregister();
-        }
-    }
+    private record TeamState(Component prefix, Component suffix, NamedTextColor color) {}
 }

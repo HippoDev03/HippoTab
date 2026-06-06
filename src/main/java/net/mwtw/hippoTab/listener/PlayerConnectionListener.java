@@ -48,6 +48,7 @@ public final class PlayerConnectionListener implements Listener {
             tabService.refreshPlayer(event.getPlayer());
             tabService.refreshPlayerNextTick(event.getPlayer());
             tabService.applySorting();
+            nameTagService.onPlayerJoin(event.getPlayer());
             nameTagService.updatePlayer(event.getPlayer());
             nameTagService.updateAllNextTick();
             belowNameService.onPlayerJoin(event.getPlayer());

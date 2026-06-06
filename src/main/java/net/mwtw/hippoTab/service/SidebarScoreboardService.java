@@ -1,7 +1,15 @@
 package net.mwtw.hippoTab.service;
 
+import com.github.retrooper.packetevents.PacketEvents;
+import com.github.retrooper.packetevents.protocol.score.BlankScoreFormat;
+import com.github.retrooper.packetevents.protocol.score.ScoreFormat;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerDisplayScoreboard;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerResetScore;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerScoreboardObjective;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerTeams;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerUpdateScore;
+import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
-import io.papermc.paper.scoreboard.numbers.NumberFormat;
 import net.mwtw.hippoTab.config.TabConfig;
 import net.mwtw.hippoTab.text.TabTextFormatter;
 import org.bukkit.Bukkit;
@@ -9,22 +17,21 @@ import org.bukkit.ChatColor;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
-import org.bukkit.scoreboard.DisplaySlot;
-import org.bukkit.scoreboard.Objective;
-import org.bukkit.scoreboard.Scoreboard;
-import org.bukkit.scoreboard.Team;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class SidebarScoreboardService {
     private static final String OBJECTIVE_NAME = "ht_sidebar";
     private static final String TEAM_PREFIX = "htsb_";
+    // Sidebar display slot in the Minecraft protocol
+    private static final int SIDEBAR_SLOT = 1;
     private static final int MAX_LINES = 15;
     private static final String[] LINE_ENTRIES = {
         ChatColor.BLACK.toString(),
@@ -48,12 +55,8 @@ public final class SidebarScoreboardService {
     private final TabConfig config;
     private final TabTextFormatter formatter;
     private BukkitTask updateTask;
-    private final Map<UUID, Scoreboard> personalBoards = new ConcurrentHashMap<>();
-    private final Map<UUID, Scoreboard> previousBoards = new ConcurrentHashMap<>();
+    // last rendered state per player for change detection
     private final Map<UUID, SidebarRenderState> renderedStates = new ConcurrentHashMap<>();
-    private int mainBoardTeamsVersion = 0;
-    private final Map<UUID, Integer> boardTeamsSyncedVersion = new ConcurrentHashMap<>();
-    private final Map<String, Integer> cachedBelowNameScores = new ConcurrentHashMap<>();
 
     public SidebarScoreboardService(JavaPlugin plugin, TabConfig config, TabTextFormatter formatter) {
         this.plugin = plugin;
@@ -65,7 +68,6 @@ public final class SidebarScoreboardService {
         if (!config.scoreboardEnabled()) {
             return;
         }
-
         updateAll();
         updateTask = Bukkit.getScheduler().runTaskTimerAsynchronously(
             plugin,
@@ -75,9 +77,8 @@ public final class SidebarScoreboardService {
         );
     }
 
-    public void markTeamsDirty() {
-        mainBoardTeamsVersion++;
-    }
+    // No-op: NameTagService now uses PacketEvents directly, main-board team sync is gone.
+    public void markTeamsDirty() {}
 
     public void stop() {
         if (updateTask != null) {
@@ -87,18 +88,13 @@ public final class SidebarScoreboardService {
         for (Player player : Bukkit.getOnlinePlayers()) {
             removePlayer(player);
         }
-        personalBoards.clear();
-        previousBoards.clear();
         renderedStates.clear();
-        boardTeamsSyncedVersion.clear();
-        cachedBelowNameScores.clear();
     }
 
     public void updateAll() {
         if (!config.scoreboardEnabled()) {
             return;
         }
-
         for (Player player : Bukkit.getOnlinePlayers()) {
             updatePlayer(player);
         }
@@ -109,110 +105,218 @@ public final class SidebarScoreboardService {
             return;
         }
 
-        Scoreboard board = getOrCreateBoard(player);
-        syncMainBoardTeamsAndBelowName(player.getUniqueId(), board);
         SidebarRenderState nextState = buildState(player);
-        SidebarRenderState previousState = renderedStates.put(player.getUniqueId(), nextState);
-        Objective objective = getOrCreateObjective(board, nextState.titleText());
-        if (previousState != null && previousState.equals(nextState)) {
+        SidebarRenderState prevState = renderedStates.put(player.getUniqueId(), nextState);
+
+        if (prevState == null) {
+            initializePlayer(player, nextState);
             return;
         }
 
-        int score = nextState.lineTexts().size();
-        for (int index = 0; index < nextState.lineTexts().size(); index++) {
-            String teamName = TEAM_PREFIX + index;
-            String entry = LINE_ENTRIES[index];
-
-            Team team = board.getTeam(teamName);
-            if (team == null) {
-                team = board.registerNewTeam(teamName);
-            }
-
-            String lineText = nextState.lineTexts().get(index);
-            if (previousState == null
-                || index >= previousState.lineTexts().size()
-                || !Objects.equals(previousState.lineTexts().get(index), lineText)) {
-                team.prefix(formatter.fromMiniMessage(lineText));
-            }
-            if (!team.hasEntry(entry)) {
-                team.addEntry(entry);
-            }
-            objective.getScore(entry).setScore(score--);
+        if (prevState.equals(nextState)) {
+            return;
         }
 
-        cleanupUnusedSidebarTeams(board, nextState.lineTexts().size());
+        // Title changed
+        if (!Objects.equals(prevState.titleText(), nextState.titleText())) {
+            sendPacket(player, new WrapperPlayServerScoreboardObjective(
+                OBJECTIVE_NAME,
+                WrapperPlayServerScoreboardObjective.ObjectiveMode.UPDATE,
+                formatter.fromMiniMessage(nextState.titleText()),
+                WrapperPlayServerScoreboardObjective.RenderType.INTEGER
+            ));
+        }
+
+        int prevCount = prevState.lineTexts().size();
+        int nextCount = nextState.lineTexts().size();
+
+        // Update changed lines
+        for (int i = 0; i < Math.min(prevCount, nextCount); i++) {
+            String nextText = nextState.lineTexts().get(i);
+            if (!Objects.equals(prevState.lineTexts().get(i), nextText)) {
+                sendLineTeamUpdate(player, i, nextText);
+            }
+        }
+
+        // Add new lines
+        for (int i = prevCount; i < nextCount; i++) {
+            sendLineTeamCreate(player, i, nextState.lineTexts().get(i));
+        }
+
+        // Remove excess lines
+        for (int i = nextCount; i < prevCount; i++) {
+            sendLineRemove(player, i);
+        }
+
+        // Re-score all lines if count changed (scores shift)
+        if (prevCount != nextCount) {
+            for (int i = 0; i < nextCount; i++) {
+                sendLineScore(player, i, nextCount);
+            }
+        }
     }
 
     public void removePlayer(Player player) {
-        UUID uuid = player.getUniqueId();
-        renderedStates.remove(uuid);
-        boardTeamsSyncedVersion.remove(uuid);
-        Scoreboard board = personalBoards.remove(uuid);
-        if (board != null) {
-            removeSidebarElements(board);
-        } else {
-            removeSidebarElements(player.getScoreboard());
+        SidebarRenderState state = renderedStates.remove(player.getUniqueId());
+        if (state == null || !player.isOnline()) {
+            return;
         }
-
-        Scoreboard previousBoard = previousBoards.remove(uuid);
-        if (previousBoard != null && player.isOnline()) {
-            player.setScoreboard(previousBoard);
-        }
-    }
-
-    private Scoreboard getOrCreateBoard(Player player) {
-        Scoreboard existingBoard = personalBoards.get(player.getUniqueId());
-        if (existingBoard != null) {
-            return existingBoard;
-        }
-
-        Scoreboard currentBoard = player.getScoreboard();
-        Scoreboard mainBoard = Bukkit.getScoreboardManager().getMainScoreboard();
-        if (currentBoard == mainBoard) {
-            Scoreboard personalBoard = Bukkit.getScoreboardManager().getNewScoreboard();
-            previousBoards.put(player.getUniqueId(), currentBoard);
-            personalBoards.put(player.getUniqueId(), personalBoard);
-            player.setScoreboard(personalBoard);
-            return personalBoard;
-        }
-
-        personalBoards.put(player.getUniqueId(), currentBoard);
-        return currentBoard;
-    }
-
-    private void removeSidebarElements(Scoreboard board) {
-        Objective objective = board.getObjective(OBJECTIVE_NAME);
-        if (objective != null) {
-            objective.unregister();
-        }
-
-        for (int i = 0; i < MAX_LINES; i++) {
-            Team team = board.getTeam(TEAM_PREFIX + i);
-            if (team != null) {
-                team.unregister();
-            }
+        sendPacket(player, new WrapperPlayServerScoreboardObjective(
+            OBJECTIVE_NAME,
+            WrapperPlayServerScoreboardObjective.ObjectiveMode.REMOVE,
+            Component.empty(),
+            WrapperPlayServerScoreboardObjective.RenderType.INTEGER
+        ));
+        for (int i = 0; i < state.lineTexts().size(); i++) {
+            sendPacket(player, new WrapperPlayServerTeams(
+                TEAM_PREFIX + i,
+                WrapperPlayServerTeams.TeamMode.REMOVE,
+                Optional.empty(),
+                Collections.emptyList()
+            ));
         }
     }
 
-    private Objective getOrCreateObjective(Scoreboard board, String titleText) {
-        Objective objective = board.getObjective(OBJECTIVE_NAME);
-        if (objective == null) {
-            objective = board.registerNewObjective(
-                OBJECTIVE_NAME,
-                "dummy",
-                formatter.fromMiniMessage(titleText)
-            );
-        } else {
-            objective.displayName(formatter.fromMiniMessage(titleText));
+    // -------------------------------------------------------------------------
+    // Initialization
+    // -------------------------------------------------------------------------
+
+    private void initializePlayer(Player player, SidebarRenderState state) {
+        // 1. Create objective
+        sendPacket(player, new WrapperPlayServerScoreboardObjective(
+            OBJECTIVE_NAME,
+            WrapperPlayServerScoreboardObjective.ObjectiveMode.CREATE,
+            formatter.fromMiniMessage(state.titleText()),
+            WrapperPlayServerScoreboardObjective.RenderType.INTEGER
+        ));
+
+        // 2. Create line teams + set scores
+        int lineCount = state.lineTexts().size();
+        for (int i = 0; i < lineCount; i++) {
+            sendLineTeamCreate(player, i, state.lineTexts().get(i));
+            sendLineScore(player, i, lineCount);
         }
 
-        if (config.scoreboardHideNumber()) {
-            objective.numberFormat(NumberFormat.blank());
-        } else {
-            objective.numberFormat(null);
+        // 3. Show in sidebar slot
+        sendPacket(player, new WrapperPlayServerDisplayScoreboard(SIDEBAR_SLOT, OBJECTIVE_NAME));
+    }
+
+    // -------------------------------------------------------------------------
+    // Per-line helpers
+    // -------------------------------------------------------------------------
+
+    private void sendLineTeamCreate(Player player, int index, String lineText) {
+        WrapperPlayServerTeams.ScoreBoardTeamInfo info = new WrapperPlayServerTeams.ScoreBoardTeamInfo(
+            Component.empty(),
+            formatter.fromMiniMessage(lineText),
+            Component.empty(),
+            WrapperPlayServerTeams.NameTagVisibility.NEVER,
+            WrapperPlayServerTeams.CollisionRule.NEVER,
+            NamedTextColor.WHITE,
+            WrapperPlayServerTeams.OptionData.NONE
+        );
+        sendPacket(player, new WrapperPlayServerTeams(
+            TEAM_PREFIX + index,
+            WrapperPlayServerTeams.TeamMode.CREATE,
+            Optional.of(info),
+            List.of(LINE_ENTRIES[index])
+        ));
+    }
+
+    private void sendLineTeamUpdate(Player player, int index, String lineText) {
+        WrapperPlayServerTeams.ScoreBoardTeamInfo info = new WrapperPlayServerTeams.ScoreBoardTeamInfo(
+            Component.empty(),
+            formatter.fromMiniMessage(lineText),
+            Component.empty(),
+            WrapperPlayServerTeams.NameTagVisibility.NEVER,
+            WrapperPlayServerTeams.CollisionRule.NEVER,
+            NamedTextColor.WHITE,
+            WrapperPlayServerTeams.OptionData.NONE
+        );
+        sendPacket(player, new WrapperPlayServerTeams(
+            TEAM_PREFIX + index,
+            WrapperPlayServerTeams.TeamMode.UPDATE,
+            Optional.of(info),
+            Collections.emptyList()
+        ));
+    }
+
+    private void sendLineScore(Player player, int index, int totalLines) {
+        int score = totalLines - index;
+        ScoreFormat format = config.scoreboardHideNumber() ? BlankScoreFormat.INSTANCE : null;
+        sendPacket(player, new WrapperPlayServerUpdateScore(
+            LINE_ENTRIES[index],
+            WrapperPlayServerUpdateScore.Action.CREATE_OR_UPDATE_ITEM,
+            OBJECTIVE_NAME,
+            score,
+            null,
+            format
+        ));
+    }
+
+    private void sendLineRemove(Player player, int index) {
+        sendPacket(player, new WrapperPlayServerResetScore(LINE_ENTRIES[index], OBJECTIVE_NAME));
+        sendPacket(player, new WrapperPlayServerTeams(
+            TEAM_PREFIX + index,
+            WrapperPlayServerTeams.TeamMode.REMOVE,
+            Optional.empty(),
+            Collections.emptyList()
+        ));
+    }
+
+    // -------------------------------------------------------------------------
+    // Packet helpers
+    // -------------------------------------------------------------------------
+
+    private void sendPacket(Player player, WrapperPlayServerScoreboardObjective packet) {
+        try {
+            PacketEvents.getAPI().getPlayerManager().sendPacketSilently(player, packet);
+        } catch (RuntimeException e) {
+            plugin.getLogger().fine("Skipped sidebar objective packet for " + player.getName() + ": " + e.getClass().getSimpleName());
         }
-        objective.setDisplaySlot(DisplaySlot.SIDEBAR);
-        return objective;
+    }
+
+    private void sendPacket(Player player, WrapperPlayServerTeams packet) {
+        try {
+            PacketEvents.getAPI().getPlayerManager().sendPacketSilently(player, packet);
+        } catch (RuntimeException e) {
+            plugin.getLogger().fine("Skipped sidebar team packet for " + player.getName() + ": " + e.getClass().getSimpleName());
+        }
+    }
+
+    private void sendPacket(Player player, WrapperPlayServerUpdateScore packet) {
+        try {
+            PacketEvents.getAPI().getPlayerManager().sendPacketSilently(player, packet);
+        } catch (RuntimeException e) {
+            plugin.getLogger().fine("Skipped sidebar score packet for " + player.getName() + ": " + e.getClass().getSimpleName());
+        }
+    }
+
+    private void sendPacket(Player player, WrapperPlayServerResetScore packet) {
+        try {
+            PacketEvents.getAPI().getPlayerManager().sendPacketSilently(player, packet);
+        } catch (RuntimeException e) {
+            plugin.getLogger().fine("Skipped sidebar reset packet for " + player.getName() + ": " + e.getClass().getSimpleName());
+        }
+    }
+
+    private void sendPacket(Player player, WrapperPlayServerDisplayScoreboard packet) {
+        try {
+            PacketEvents.getAPI().getPlayerManager().sendPacketSilently(player, packet);
+        } catch (RuntimeException e) {
+            plugin.getLogger().fine("Skipped sidebar display packet for " + player.getName() + ": " + e.getClass().getSimpleName());
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // State helpers
+    // -------------------------------------------------------------------------
+
+    private SidebarRenderState buildState(Player player) {
+        return new SidebarRenderState(
+            formatter.toMiniMessageText(player, config.scoreboardTitle()),
+            formatter.toMiniMessageLines(player, sanitizeLines(config.scoreboardLines()))
+        );
     }
 
     private List<String> sanitizeLines(List<String> lines) {
@@ -227,135 +331,5 @@ public final class SidebarScoreboardService {
         return sanitized;
     }
 
-    private void cleanupUnusedSidebarTeams(Scoreboard board, int usedCount) {
-        for (int i = usedCount; i < MAX_LINES; i++) {
-            board.resetScores(LINE_ENTRIES[i]);
-            Team team = board.getTeam(TEAM_PREFIX + i);
-            if (team != null) {
-                team.unregister();
-            }
-        }
-    }
-
-    private void syncMainBoardTeamsAndBelowName(UUID boardOwner, Scoreboard targetBoard) {
-        Scoreboard mainBoard = Bukkit.getScoreboardManager().getMainScoreboard();
-        if (targetBoard == mainBoard) {
-            return;
-        }
-
-        int syncedVersion = boardTeamsSyncedVersion.getOrDefault(boardOwner, -1);
-        if (syncedVersion != mainBoardTeamsVersion) {
-            for (Team sourceTeam : mainBoard.getTeams()) {
-                Team targetTeam = targetBoard.getTeam(sourceTeam.getName());
-                if (targetTeam == null) {
-                    targetTeam = targetBoard.registerNewTeam(sourceTeam.getName());
-                }
-
-                targetTeam.displayName(sourceTeam.displayName());
-                targetTeam.prefix(sourceTeam.prefix());
-                targetTeam.suffix(sourceTeam.suffix());
-                copyTeamColorSafely(sourceTeam, targetTeam);
-                targetTeam.setAllowFriendlyFire(sourceTeam.allowFriendlyFire());
-                targetTeam.setCanSeeFriendlyInvisibles(sourceTeam.canSeeFriendlyInvisibles());
-
-                for (Team.Option option : Team.Option.values()) {
-                    targetTeam.setOption(option, sourceTeam.getOption(option));
-                }
-
-                for (String entry : new ArrayList<>(targetTeam.getEntries())) {
-                    if (!sourceTeam.hasEntry(entry)) {
-                        targetTeam.removeEntry(entry);
-                    }
-                }
-                for (String entry : sourceTeam.getEntries()) {
-                    if (!targetTeam.hasEntry(entry)) {
-                        targetTeam.addEntry(entry);
-                    }
-                }
-            }
-            boardTeamsSyncedVersion.put(boardOwner, mainBoardTeamsVersion);
-        }
-
-        Objective sourceBelow = mainBoard.getObjective(DisplaySlot.BELOW_NAME);
-        if (sourceBelow == null) {
-            return;
-        }
-
-        Objective targetBelow = targetBoard.getObjective(sourceBelow.getName());
-        if (targetBelow != null && targetBelow.getDisplaySlot() != DisplaySlot.BELOW_NAME) {
-            targetBelow.unregister();
-            targetBelow = null;
-        }
-        if (targetBelow == null) {
-            targetBelow = targetBoard.registerNewObjective(
-                sourceBelow.getName(),
-                sourceBelow.getTrackedCriteria(),
-                sourceBelow.displayName(),
-                sourceBelow.getRenderType()
-            );
-        } else {
-            targetBelow.displayName(sourceBelow.displayName());
-            targetBelow.setRenderType(sourceBelow.getRenderType());
-        }
-        targetBelow.numberFormat(sourceBelow.numberFormat());
-        targetBelow.setDisplaySlot(DisplaySlot.BELOW_NAME);
-
-        // Compute changed scores on main board since last sync
-        Map<String, Integer> changedScores = new HashMap<>();
-        for (String entry : mainBoard.getEntries()) {
-            if (sourceBelow.getScore(entry).isScoreSet()) {
-                int val = sourceBelow.getScore(entry).getScore();
-                Integer cached = cachedBelowNameScores.get(entry);
-                if (cached == null || cached != val) {
-                    changedScores.put(entry, val);
-                }
-            }
-        }
-
-        // Update cached scores map
-        for (Map.Entry<String, Integer> changed : changedScores.entrySet()) {
-            cachedBelowNameScores.put(changed.getKey(), changed.getValue());
-        }
-
-        // Clear entries that no longer have a score on main board
-        for (String entry : targetBoard.getEntries()) {
-            if (!sourceBelow.getScore(entry).isScoreSet() && targetBelow.getScore(entry).isScoreSet()) {
-                targetBelow.getScore(entry).resetScore();
-                cachedBelowNameScores.remove(entry);
-            }
-        }
-
-        // Apply only changed scores to this board
-        for (Map.Entry<String, Integer> changed : changedScores.entrySet()) {
-            targetBelow.getScore(changed.getKey()).setScore(changed.getValue());
-            targetBelow.getScore(changed.getKey()).numberFormat(sourceBelow.getScore(changed.getKey()).numberFormat());
-        }
-    }
-
-    private void copyTeamColorSafely(Team sourceTeam, Team targetTeam) {
-        try {
-            var sourceColor = sourceTeam.color();
-            if (sourceColor == null) {
-                return;
-            }
-            targetTeam.color(NamedTextColor.nearestTo(sourceColor));
-        } catch (RuntimeException exception) {
-            plugin.getLogger().fine(
-                "Skipped syncing team color for team "
-                    + sourceTeam.getName()
-                    + " due to unsupported color state: "
-                    + exception.getClass().getSimpleName()
-            );
-        }
-    }
-
-    private SidebarRenderState buildState(Player player) {
-        return new SidebarRenderState(
-            formatter.toMiniMessageText(player, config.scoreboardTitle()),
-            formatter.toMiniMessageLines(player, sanitizeLines(config.scoreboardLines()))
-        );
-    }
-
-    private record SidebarRenderState(String titleText, List<String> lineTexts) {
-    }
+    private record SidebarRenderState(String titleText, List<String> lineTexts) {}
 }
