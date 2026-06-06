@@ -1,6 +1,9 @@
 package net.mwtw.hippoTab.service;
 
 import com.github.retrooper.packetevents.PacketEvents;
+import com.github.retrooper.packetevents.event.PacketListenerAbstract;
+import com.github.retrooper.packetevents.event.PacketSendEvent;
+import com.github.retrooper.packetevents.protocol.packettype.PacketType;
 import com.github.retrooper.packetevents.protocol.score.FixedScoreFormat;
 import com.github.retrooper.packetevents.protocol.score.ScoreFormat;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerDisplayScoreboard;
@@ -23,7 +26,6 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public final class BelowNameService {
     private static final String OBJECTIVE_NAME = "hippotab_health";
-    // 2 = below name slot in the Minecraft protocol
     private static final int BELOW_NAME_SLOT = 2;
 
     private final JavaPlugin plugin;
@@ -32,9 +34,12 @@ public final class BelowNameService {
     private final PlaceholderService placeholderService;
     private final ConditionParser conditionParser;
     private BukkitTask updateTask;
+    private PacketListenerAbstract displayInterceptor;
 
     private final Map<UUID, Integer> cachedScores = new ConcurrentHashMap<>();
     private final Map<UUID, String> cachedFancyValues = new ConcurrentHashMap<>();
+    // targets whose score is currently disabled — ResetScore already sent, avoid re-sending every tick
+    private final java.util.Set<UUID> disabledScorePlayers = ConcurrentHashMap.newKeySet();
 
     public BelowNameService(JavaPlugin plugin, TabConfig config, TabTextFormatter formatter,
                             PlaceholderService placeholderService, ConditionParser conditionParser) {
@@ -49,7 +54,27 @@ public final class BelowNameService {
         if (!config.belownameEnabled()) {
             return;
         }
+        // Block any DisplayScoreboard(slot=2) not from us (vanilla health override etc.)
+        // Allow empty string through so we can send our own hide packets.
+        displayInterceptor = new PacketListenerAbstract() {
+            @Override
+            public void onPacketSend(PacketSendEvent event) {
+                if (event.getPacketType() != PacketType.Play.Server.DISPLAY_SCOREBOARD) {
+                    return;
+                }
+                WrapperPlayServerDisplayScoreboard packet = new WrapperPlayServerDisplayScoreboard(event);
+                String name = packet.getScoreName();
+                if (packet.getPosition() == BELOW_NAME_SLOT
+                        && !OBJECTIVE_NAME.equals(name)
+                        && !name.isEmpty()) {
+                    event.setCancelled(true);
+                }
+            }
+        };
+        PacketEvents.getAPI().getEventManager().registerListener(displayInterceptor);
+
         for (Player p : Bukkit.getOnlinePlayers()) {
+            sendObjectiveRemoveTo(p);
             sendObjectiveTo(p);
             sendAllScoresTo(p);
             sendDisplayTo(p);
@@ -63,6 +88,10 @@ public final class BelowNameService {
     }
 
     public void stop() {
+        if (displayInterceptor != null) {
+            PacketEvents.getAPI().getEventManager().unregisterListener(displayInterceptor);
+            displayInterceptor = null;
+        }
         if (updateTask != null) {
             updateTask.cancel();
             updateTask = null;
@@ -72,34 +101,46 @@ public final class BelowNameService {
         }
         cachedScores.clear();
         cachedFancyValues.clear();
+        disabledScorePlayers.clear();
     }
 
-    /**
-     * Called on player join. Sends the full objective state to the joining player
-     * (create → all existing scores → display) before they can see anyone as 0,
-     * then broadcasts their own score to everyone.
-     */
     public void onPlayerJoin(Player joiner) {
         if (!config.belownameEnabled()) {
             return;
         }
-        // 1. Register the objective on the joining client
+        sendObjectiveRemoveTo(joiner);
         sendObjectiveTo(joiner);
-        // 2. Push all cached scores so the joiner sees correct values immediately
         sendAllScoresTo(joiner);
-        // 3. Show the display slot — joiner now sees valid scores, not 0
+        // Joiner missed prior N/A packets for already-disabled players — send them now
+        for (UUID disabledUuid : disabledScorePlayers) {
+            Player disabled = Bukkit.getPlayer(disabledUuid);
+            if (disabled != null) {
+                sendScore(joiner, disabled.getName(), 0, new FixedScoreFormat(Component.text("N/A")));
+            }
+        }
         sendDisplayTo(joiner);
-        // 4. Resolve and broadcast joiner's own score to everyone (including joiner)
         broadcastScore(joiner);
-        // 5. Re-resolve on next tick in case health/placeholders weren't ready yet
-        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
-            if (joiner.isOnline()) broadcastScore(joiner);
-        });
+        Bukkit.getScheduler().runTaskLaterAsynchronously(plugin, () -> {
+            if (!joiner.isOnline()) return;
+            broadcastScore(joiner);
+        }, 2L);
+    }
+
+    public void onPlayerChangeWorld(Player player) {
+        if (!config.belownameEnabled()) {
+            return;
+        }
+        // Clear all caches so broadcastScore unconditionally re-evaluates and re-sends
+        disabledScorePlayers.remove(player.getUniqueId());
+        cachedScores.remove(player.getUniqueId());
+        cachedFancyValues.remove(player.getUniqueId());
+        broadcastScore(player);
     }
 
     public void removePlayer(Player player) {
         cachedScores.remove(player.getUniqueId());
         cachedFancyValues.remove(player.getUniqueId());
+        disabledScorePlayers.remove(player.getUniqueId());
         String name = player.getName();
         for (Player viewer : Bukkit.getOnlinePlayers()) {
             if (!viewer.equals(player)) {
@@ -109,14 +150,12 @@ public final class BelowNameService {
     }
 
     // -------------------------------------------------------------------------
-    // Periodic update — staggered across ticks to spread MSPT load
+    // Periodic update
     // -------------------------------------------------------------------------
 
     private void updateAll() {
         List<Player> players = List.copyOf(Bukkit.getOnlinePlayers());
         long interval = config.belownameUpdateIntervalTicks();
-        // Spread updates across at most half the interval, capped at 5 ticks so
-        // fast intervals (2-4 ticks) don't stagger at all and slow ones don't over-spread.
         long spread = Math.min(players.size(), Math.min(5, Math.max(1, interval / 2)));
 
         for (int i = 0; i < players.size(); i++) {
@@ -136,23 +175,24 @@ public final class BelowNameService {
     // Core score logic
     // -------------------------------------------------------------------------
 
-    /**
-     * Resolves the current score for a player and, if it changed, sends an
-     * UpdateScore packet to every online player.
-     */
     private void broadcastScore(Player target) {
         ScoreData data = resolveScore(target);
         UUID uuid = target.getUniqueId();
         String name = target.getName();
 
         if (data == null) {
-            if (cachedScores.remove(uuid) != null || cachedFancyValues.remove(uuid) != null) {
+            cachedScores.remove(uuid);
+            cachedFancyValues.remove(uuid);
+            if (disabledScorePlayers.add(uuid)) {
+                ScoreFormat naFormat = new FixedScoreFormat(Component.text(" N/A"));
                 for (Player viewer : Bukkit.getOnlinePlayers()) {
-                    sendResetScore(viewer, name);
+                    sendScore(viewer, name, 0, naFormat);
                 }
             }
             return;
         }
+
+        disabledScorePlayers.remove(uuid);
 
         Integer prevScore = cachedScores.get(uuid);
         String prevFancy = cachedFancyValues.get(uuid);

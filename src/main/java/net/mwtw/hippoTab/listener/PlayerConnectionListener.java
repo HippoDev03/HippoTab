@@ -8,8 +8,10 @@ import net.mwtw.hippoTab.service.RedisTabSyncService;
 import net.mwtw.hippoTab.service.SidebarScoreboardService;
 import net.mwtw.hippoTab.service.TabService;
 import org.bukkit.Bukkit;
+import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.Plugin;
@@ -54,6 +56,17 @@ public final class PlayerConnectionListener implements Listener {
             belowNameService.onPlayerJoin(event.getPlayer());
             sidebarScoreboardService.updatePlayer(event.getPlayer());
             redisTabSyncService.handleConnectionChange();
+        });
+    }
+
+    @EventHandler
+    public void onPlayerChangeWorld(PlayerChangedWorldEvent event) {
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            Player player = event.getPlayer();
+            belowNameService.onPlayerChangeWorld(player);
+            tabService.refreshPlayer(player);
+            nameTagService.updatePlayer(player);
+            sidebarScoreboardService.updatePlayer(player);
         });
     }
 

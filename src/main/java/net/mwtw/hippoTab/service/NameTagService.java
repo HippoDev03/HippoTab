@@ -303,7 +303,7 @@ public final class NameTagService {
             state.prefix(),
             state.suffix(),
             WrapperPlayServerTeams.NameTagVisibility.ALWAYS,
-            WrapperPlayServerTeams.CollisionRule.ALWAYS,
+            WrapperPlayServerTeams.CollisionRule.NEVER,
             state.color(),
             WrapperPlayServerTeams.OptionData.NONE
         );
