@@ -9,6 +9,7 @@ import net.mwtw.hippoTab.service.*;
 import net.mwtw.hippoTab.text.TabTextFormatter;
 import org.bukkit.Bukkit;
 import org.bukkit.command.PluginCommand;
+import org.bukkit.entity.Player;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.event.HandlerList;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -134,6 +135,38 @@ public final class Core extends JavaPlugin {
         sidebarScoreboardService.start();
         tabService.start();
         redisTabSyncService.start();
+    }
+
+    // -------------------------------------------------------------------------
+    // Public API — call these from other plugins (e.g. hipponick) when a
+    // player's nick or display name changes so the nametag updates immediately
+    // instead of waiting for the next update tick.
+    // -------------------------------------------------------------------------
+
+    public NameTagService getNameTagService() {
+        return nameTagService;
+    }
+
+    public TabService getTabService() {
+        return tabService;
+    }
+
+    /**
+     * Immediately refreshes the tab entry and nametag for {@code player}.
+     * Call this from hipponick (or any nick plugin) right after a nick changes:
+     *
+     * <pre>{@code
+     * Plugin ht = Bukkit.getPluginManager().getPlugin("HippoTab");
+     * if (ht instanceof Core core) core.refreshPlayer(targetPlayer);
+     * }</pre>
+     */
+    public void refreshPlayer(Player player) {
+        if (player == null || !player.isOnline()) return;
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            if (tabService != null) tabService.refreshPlayer(player);
+            // forceUpdatePlayer clears all caches so a nick change is never skipped
+            if (nameTagService != null) nameTagService.forceUpdatePlayer(player);
+        });
     }
 
     private YamlConfiguration loadConditionalPlaceholderConfig() {

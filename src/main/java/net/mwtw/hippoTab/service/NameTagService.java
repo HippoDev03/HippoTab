@@ -8,6 +8,7 @@ import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEn
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerTeams;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.mwtw.hippoTab.config.TabConfig;
 import net.mwtw.hippoTab.text.TabTextFormatter;
 import org.bukkit.Bukkit;
@@ -43,6 +44,9 @@ public final class NameTagService {
     // change detection
     private final Map<UUID, NameTagParts> cachedParts = new ConcurrentHashMap<>();
     private final Map<UUID, String> cachedUsername = new ConcurrentHashMap<>();
+    // tracks the last resolved middle (nick/display) string independently of the full JSON
+    // so a nick change is detected even when the prefix is unchanged
+    private final Map<UUID, String> cachedNickMiddle = new ConcurrentHashMap<>();
 
     public void setOnTeamsChanged(Runnable callback) {
         this.onTeamsChanged = callback;
@@ -84,6 +88,7 @@ public final class NameTagService {
         viewerKnownTeams.clear();
         cachedParts.clear();
         cachedUsername.clear();
+        cachedNickMiddle.clear();
     }
 
     public void updateAll() {
@@ -154,22 +159,41 @@ public final class NameTagService {
             TeamState state = new TeamState(prefix, suffix, color);
             teamStates.put(teamName, state);
 
+            Component displayName = player.displayName();
+            String plainDisplay = PlainTextComponentSerializer.plainText().serialize(displayName);
+            Component teamDisplay = plainDisplay.equals(player.getName()) ? Component.empty() : displayName;
+
             if (!alreadyAssigned) {
                 playerTeams.put(player.getUniqueId(), teamName);
-                // Send CREATE or UPDATE depending on whether each viewer already knows this team
-                sendTeamToAllViewers(teamName, state, List.of(player.getName()));
+                sendTeamToAllViewers(teamName, state, teamDisplay, List.of(player.getName()));
             } else {
-                // Parts changed — send UPDATE (or CREATE if viewer somehow missed it)
-                sendTeamToAllViewers(teamName, state, List.of(player.getName()));
+                sendTeamToAllViewers(teamName, state, teamDisplay, List.of(player.getName()));
             }
         }
 
-        applyUsernameReplacement(player, true);
+        // Entity metadata override: combines prefix + middle + suffix so the full
+        // formatted name (including rank prefix) shows above the player's head.
+        // Priority: replace-username format → Bukkit display name (nickname) → nothing.
+        if (isPacketEventsAvailable()) {
+            applyFullNameMetadata(player, nameTagParts, true);
+        }
     }
 
-    // Called on join: sends CREATE for all existing teams to the new viewer.
-    // Uses the same known-teams check so there is no duplicate CREATE if updatePlayer
-    // races with this method.
+    /**
+     * Clears all caches for {@code player} then runs a full update.
+     * Call this (via Core.refreshPlayer) whenever a nick changes so the update
+     * is never blocked by a stale cache entry.
+     */
+    public void forceUpdatePlayer(Player player) {
+        cachedParts.remove(player.getUniqueId());
+        cachedUsername.remove(player.getUniqueId());
+        cachedNickMiddle.remove(player.getUniqueId());
+        updatePlayer(player);
+    }
+
+    // Called on join: sends CREATE for all existing teams AND replays any active
+    // entity-metadata name overrides (nicks) to the new viewer so they see nicks
+    // for players already online.
     public void onPlayerJoin(Player joiner) {
         if (!config.nametagEnabled()) {
             return;
@@ -178,7 +202,26 @@ public final class NameTagService {
             String teamName = entry.getKey();
             String memberName = getMemberNameForTeam(teamName);
             List<String> members = memberName != null ? List.of(memberName) : Collections.emptyList();
-            sendTeamToViewer(joiner, teamName, entry.getValue(), members);
+            sendTeamToViewer(joiner, teamName, entry.getValue(), Component.empty(), members);
+        }
+
+        // Replay entity metadata for every online player that has an active nick override
+        if (isPacketEventsAvailable()) {
+            for (Player online : Bukkit.getOnlinePlayers()) {
+                if (online.equals(joiner)) continue;
+                String nameJson = cachedUsername.get(online.getUniqueId());
+                if (nameJson == null) continue;
+                List<EntityData<?>> metadata = List.of(
+                    new EntityData<>(2, EntityDataTypes.OPTIONAL_COMPONENT, Optional.of(nameJson)),
+                    new EntityData<>(3, EntityDataTypes.BOOLEAN, true)
+                );
+                try {
+                    PacketEvents.getAPI().getPlayerManager().sendPacketSilently(
+                        joiner, new WrapperPlayServerEntityMetadata(online.getEntityId(), metadata));
+                } catch (RuntimeException e) {
+                    plugin.getLogger().fine("Skipped nick metadata replay for " + online.getName() + ": " + e.getClass().getSimpleName());
+                }
+            }
         }
     }
 
@@ -187,28 +230,31 @@ public final class NameTagService {
         viewerKnownTeams.remove(player.getUniqueId());
         cachedParts.remove(player.getUniqueId());
         cachedUsername.remove(player.getUniqueId());
+        cachedNickMiddle.remove(player.getUniqueId());
 
         String teamName = playerTeams.remove(player.getUniqueId());
         if (teamName != null) {
             teamStates.remove(teamName);
             removeTeamFromAllViewers(teamName, player.getName());
         }
-        applyUsernameReplacement(player, false);
-        player.customName(null);
-        player.setCustomNameVisible(false);
+        clearEntityDisplayAndRestoreNick(player);
     }
 
     private void removePlayerTag(Player player) {
         cachedParts.remove(player.getUniqueId());
+        cachedNickMiddle.remove(player.getUniqueId());
         String teamName = playerTeams.get(player.getUniqueId());
         if (teamName != null) {
             TeamState resetState = new TeamState(Component.empty(), Component.empty(), NamedTextColor.WHITE);
             teamStates.put(teamName, resetState);
-            sendTeamToAllViewers(teamName, resetState, List.of(player.getName()));
+            sendTeamToAllViewers(teamName, resetState, Component.empty(), List.of(player.getName()));
         }
-        applyUsernameReplacement(player, false);
-        player.customName(null);
-        player.setCustomNameVisible(false);
+        clearEntityDisplayAndRestoreNick(player);
+    }
+
+    private void clearEntityDisplayAndRestoreNick(Player player) {
+        NameTagParts parts = cachedParts.getOrDefault(player.getUniqueId(), new NameTagParts("", ""));
+        applyFullNameMetadata(player, parts, false);
     }
 
     public String getFormattedName(Player player) {
@@ -237,9 +283,9 @@ public final class NameTagService {
      * If the viewer already received CREATE for this team → sends UPDATE.
      * If not → sends CREATE (which also adds the member in one packet).
      */
-    private void sendTeamToViewer(Player viewer, String teamName, TeamState state, List<String> members) {
+    private void sendTeamToViewer(Player viewer, String teamName, TeamState state, Component displayName, List<String> members) {
         Set<String> known = viewerKnownTeams.computeIfAbsent(viewer.getUniqueId(), k -> ConcurrentHashMap.newKeySet());
-        WrapperPlayServerTeams.ScoreBoardTeamInfo info = buildTeamInfo(state);
+        WrapperPlayServerTeams.ScoreBoardTeamInfo info = buildTeamInfo(state, displayName);
         if (known.add(teamName)) {
             sendTo(viewer, new WrapperPlayServerTeams(teamName, WrapperPlayServerTeams.TeamMode.CREATE, Optional.of(info), members));
         } else {
@@ -248,9 +294,9 @@ public final class NameTagService {
     }
 
     /** Sends to all currently online viewers via {@link #sendTeamToViewer}. */
-    private void sendTeamToAllViewers(String teamName, TeamState state, List<String> members) {
+    private void sendTeamToAllViewers(String teamName, TeamState state, Component displayName, List<String> members) {
         for (Player viewer : Bukkit.getOnlinePlayers()) {
-            sendTeamToViewer(viewer, teamName, state, members);
+            sendTeamToViewer(viewer, teamName, state, displayName, members);
         }
     }
 
@@ -298,8 +344,12 @@ public final class NameTagService {
     }
 
     private WrapperPlayServerTeams.ScoreBoardTeamInfo buildTeamInfo(TeamState state) {
+        return buildTeamInfo(state, Component.empty());
+    }
+
+    private WrapperPlayServerTeams.ScoreBoardTeamInfo buildTeamInfo(TeamState state, Component displayName) {
         return new WrapperPlayServerTeams.ScoreBoardTeamInfo(
-            Component.empty(),
+            displayName,
             state.prefix(),
             state.suffix(),
             WrapperPlayServerTeams.NameTagVisibility.ALWAYS,
@@ -313,36 +363,75 @@ public final class NameTagService {
     // Username replacement (PacketEvents entity metadata)
     // -------------------------------------------------------------------------
 
-    private void applyUsernameReplacement(Player player, boolean enabled) {
-        if (!config.nametagReplaceUsernameEnabled() || !isPacketEventsAvailable()) {
-            return;
-        }
+    /**
+     * Builds and sends entity metadata that shows the full formatted name
+     * (prefix + middle + suffix) above the player's head, overriding the team display.
+     *
+     * Middle text priority:
+     *  1. replace-username format (e.g. %hipponick_display_name%) when enabled
+     *  2. Bukkit display name when it differs from the real username (Bukkit nick)
+     *  3. Nothing — clears any previous override so the team display takes over
+     *
+     * When {@code enabled} is false the override is always cleared.
+     */
+    private void applyFullNameMetadata(Player player, NameTagParts parts, boolean enabled) {
+        if (!isPacketEventsAvailable()) return;
 
-        String renderedUsername = null;
-        Component nameComponent = null;
+        // Resolve the middle (nick) text — track it separately so a nick change
+        // always triggers a resend even when the prefix/suffix haven't changed.
+        String resolvedMiddle = null;
+
         if (enabled) {
-            String format = config.nametagReplaceUsernameFormat();
-            if (format != null && !format.isBlank()) {
-                renderedUsername = formatter.toMiniMessageText(player, format);
-                if (!renderedUsername.isBlank()) {
-                    nameComponent = formatter.fromMiniMessage(renderedUsername);
-                } else {
-                    renderedUsername = null;
+            // Priority 1: replace-username placeholder format (e.g. %hipponick_display_name%)
+            if (config.nametagReplaceUsernameEnabled()) {
+                String format = config.nametagReplaceUsernameFormat();
+                if (format != null && !format.isBlank()) {
+                    String r = formatter.toMiniMessageText(player, format);
+                    if (!r.isBlank()) {
+                        resolvedMiddle = r;
+                    }
+                }
+            }
+
+            // Priority 2: Bukkit display name (nick set via Bukkit API)
+            if (resolvedMiddle == null) {
+                Component displayName = player.displayName();
+                String plainDisplay = PlainTextComponentSerializer.plainText().serialize(displayName);
+                if (!plainDisplay.equals(player.getName())) {
+                    // Serialize back to MiniMessage so colors are preserved
+                    resolvedMiddle = net.kyori.adventure.text.minimessage.MiniMessage.miniMessage().serialize(displayName);
+                    final Component nick = displayName;
+                    Bukkit.getScheduler().runTask(plugin, () -> {
+                        if (player.isOnline()) player.displayName(nick);
+                    });
                 }
             }
         }
 
-        String prevUsername = cachedUsername.get(player.getUniqueId());
-        if (Objects.equals(renderedUsername, prevUsername)) {
-            return;
-        }
-        cachedUsername.put(player.getUniqueId(), renderedUsername);
+        // If the resolved nick hasn't changed, skip rebuilding (fast path).
+        // We check nick AND parts together so a prefix change still forces a resend.
+        String middleCacheKey = resolvedMiddle + "|" + parts.rawPrefix() + "|" + parts.rawSuffix();
+        String prevMiddle = cachedNickMiddle.get(player.getUniqueId());
+        if (Objects.equals(middleCacheKey, prevMiddle)) return;
+        cachedNickMiddle.put(player.getUniqueId(), middleCacheKey);
 
-        String customNameJson = nameComponent == null ? null : AdventureSerializer.toJson(nameComponent);
-        boolean hasCustomName = customNameJson != null && !customNameJson.isBlank();
-        List<EntityData<?>> metadata = hasCustomName
+        // Build the full name: prefix + middle + suffix
+        String nameJson = null;
+        if (resolvedMiddle != null) {
+            // Use the full prefix (with trailing color) so it colors the nick correctly.
+            Component prefix = formatter.fromMiniMessage(parts.rawPrefix());
+            Component middle = formatter.fromMiniMessage(resolvedMiddle);
+            Component suffix = formatter.fromMiniMessage(parts.rawSuffix());
+            Component fullName = prefix.append(middle).append(suffix);
+            nameJson = AdventureSerializer.toJson(fullName);
+        }
+
+        // Keep cachedUsername in sync (used by clearEntityDisplayAndRestoreNick)
+        cachedUsername.put(player.getUniqueId(), nameJson);
+
+        List<EntityData<?>> metadata = nameJson != null
             ? List.of(
-                new EntityData<>(2, EntityDataTypes.OPTIONAL_COMPONENT, Optional.of(customNameJson)),
+                new EntityData<>(2, EntityDataTypes.OPTIONAL_COMPONENT, Optional.of(nameJson)),
                 new EntityData<>(3, EntityDataTypes.BOOLEAN, true)
             )
             : List.of(
@@ -352,18 +441,11 @@ public final class NameTagService {
 
         WrapperPlayServerEntityMetadata packet = new WrapperPlayServerEntityMetadata(player.getEntityId(), metadata);
         for (Player viewer : Bukkit.getOnlinePlayers()) {
-            if (!viewer.isOnline() || !viewer.isValid()) {
-                continue;
-            }
+            if (!viewer.isOnline() || !viewer.isValid()) continue;
             try {
                 PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer, packet);
             } catch (RuntimeException e) {
-                plugin.getLogger().fine(
-                    "Skipped username replacement packet for viewer "
-                        + viewer.getName()
-                        + " due to transient channel state: "
-                        + e.getClass().getSimpleName()
-                );
+                plugin.getLogger().fine("Skipped name metadata packet for " + viewer.getName() + ": " + e.getClass().getSimpleName());
             }
         }
     }
