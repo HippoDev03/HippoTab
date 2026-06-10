@@ -3,7 +3,6 @@ package net.mwtw.hippoTab.service;
 import com.github.retrooper.packetevents.PacketEvents;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
-import com.github.retrooper.packetevents.util.adventure.AdventureSerializer;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityMetadata;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerTeams;
 import net.kyori.adventure.text.Component;
@@ -43,9 +42,10 @@ public final class NameTagService {
     private final Map<UUID, Set<String>> viewerKnownTeams = new ConcurrentHashMap<>();
     // change detection
     private final Map<UUID, NameTagParts> cachedParts = new ConcurrentHashMap<>();
-    private final Map<UUID, String> cachedUsername = new ConcurrentHashMap<>();
-    // tracks the last resolved middle (nick/display) string independently of the full JSON
-    // so a nick change is detected even when the prefix is unchanged
+    // last full-name Component sent as entity metadata (null = no override active)
+    private final Map<UUID, Component> cachedNameComponent = new ConcurrentHashMap<>();
+    // tracks the last resolved middle (nick/display) string so a nick change is
+    // detected even when prefix/suffix haven't changed
     private final Map<UUID, String> cachedNickMiddle = new ConcurrentHashMap<>();
 
     public void setOnTeamsChanged(Runnable callback) {
@@ -87,7 +87,7 @@ public final class NameTagService {
         teamStates.clear();
         viewerKnownTeams.clear();
         cachedParts.clear();
-        cachedUsername.clear();
+        cachedNameComponent.clear();
         cachedNickMiddle.clear();
     }
 
@@ -186,7 +186,7 @@ public final class NameTagService {
      */
     public void forceUpdatePlayer(Player player) {
         cachedParts.remove(player.getUniqueId());
-        cachedUsername.remove(player.getUniqueId());
+        cachedNameComponent.remove(player.getUniqueId());
         cachedNickMiddle.remove(player.getUniqueId());
         updatePlayer(player);
     }
@@ -209,10 +209,10 @@ public final class NameTagService {
         if (isPacketEventsAvailable()) {
             for (Player online : Bukkit.getOnlinePlayers()) {
                 if (online.equals(joiner)) continue;
-                String nameJson = cachedUsername.get(online.getUniqueId());
-                if (nameJson == null) continue;
+                Component nameComp = cachedNameComponent.get(online.getUniqueId());
+                if (nameComp == null) continue;
                 List<EntityData<?>> metadata = List.of(
-                    new EntityData<>(2, EntityDataTypes.OPTIONAL_COMPONENT, Optional.of(nameJson)),
+                    new EntityData<>(2, EntityDataTypes.OPTIONAL_ADV_COMPONENT, Optional.of(nameComp)),
                     new EntityData<>(3, EntityDataTypes.BOOLEAN, true)
                 );
                 try {
@@ -229,7 +229,7 @@ public final class NameTagService {
         // Drop this player's viewer state — they are leaving
         viewerKnownTeams.remove(player.getUniqueId());
         cachedParts.remove(player.getUniqueId());
-        cachedUsername.remove(player.getUniqueId());
+        cachedNameComponent.remove(player.getUniqueId());
         cachedNickMiddle.remove(player.getUniqueId());
 
         String teamName = playerTeams.remove(player.getUniqueId());
@@ -415,27 +415,24 @@ public final class NameTagService {
         if (Objects.equals(middleCacheKey, prevMiddle)) return;
         cachedNickMiddle.put(player.getUniqueId(), middleCacheKey);
 
-        // Build the full name: prefix + middle + suffix
-        String nameJson = null;
+        // Build the full name component: prefix + middle + suffix
+        Component fullName = null;
         if (resolvedMiddle != null) {
-            // Use the full prefix (with trailing color) so it colors the nick correctly.
-            Component prefix = formatter.fromMiniMessage(parts.rawPrefix());
-            Component middle = formatter.fromMiniMessage(resolvedMiddle);
-            Component suffix = formatter.fromMiniMessage(parts.rawSuffix());
-            Component fullName = prefix.append(middle).append(suffix);
-            nameJson = AdventureSerializer.toJson(fullName);
+            // Concatenate MiniMessage strings and parse once — produces a flat component
+            // tree that serializes cleanly and preserves color inheritance correctly.
+            String fullMiniMessage = parts.rawPrefix() + resolvedMiddle + parts.rawSuffix();
+            fullName = formatter.fromMiniMessage(fullMiniMessage);
         }
 
-        // Keep cachedUsername in sync (used by clearEntityDisplayAndRestoreNick)
-        cachedUsername.put(player.getUniqueId(), nameJson);
+        cachedNameComponent.put(player.getUniqueId(), fullName);
 
-        List<EntityData<?>> metadata = nameJson != null
+        List<EntityData<?>> metadata = fullName != null
             ? List.of(
-                new EntityData<>(2, EntityDataTypes.OPTIONAL_COMPONENT, Optional.of(nameJson)),
+                new EntityData<>(2, EntityDataTypes.OPTIONAL_ADV_COMPONENT, Optional.of(fullName)),
                 new EntityData<>(3, EntityDataTypes.BOOLEAN, true)
             )
             : List.of(
-                new EntityData<>(2, EntityDataTypes.OPTIONAL_COMPONENT, Optional.empty()),
+                new EntityData<>(2, EntityDataTypes.OPTIONAL_ADV_COMPONENT, Optional.empty()),
                 new EntityData<>(3, EntityDataTypes.BOOLEAN, false)
             );
 
