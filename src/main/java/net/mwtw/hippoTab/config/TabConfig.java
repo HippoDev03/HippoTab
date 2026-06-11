@@ -19,15 +19,6 @@ public record TabConfig(
     String rankPlaceholder,
     boolean sortingDescending,
     int defaultRank,
-    boolean nametagEnabled,
-    boolean nametagAutoAssignTeam,
-    long nametagUpdateIntervalTicks,
-    String nametagPrefix,
-    String nametagSuffix,
-    String nametagNameFormat,
-    boolean nametagReplaceUsernameEnabled,
-    String nametagReplaceUsernameFormat,
-    String nametagDisableIf,
     boolean belownameEnabled,
     long belownameUpdateIntervalTicks,
     String belownameTitle,
@@ -57,16 +48,6 @@ public record TabConfig(
         String rankPlaceholder = config.getString("sorting.rank-placeholder", "%vaultunlocked_weight%");
         boolean sortingDescending = config.getBoolean("sorting.descending", true);
         int defaultRank = config.getInt("sorting.default-rank", 0);
-
-        boolean nametagEnabled = config.getBoolean("nametag.enabled", true);
-        boolean nametagAutoAssignTeam = config.getBoolean("nametag.auto-assign-team", false);
-        long nametagUpdateIntervalTicks = Math.max(1L, config.getLong("nametag.update-interval-ticks", 40L));
-        String nametagPrefix = config.getString("nametag.prefix", "%vaultunlocked_prefix%");
-        String nametagSuffix = config.getString("nametag.suffix", "");
-        String nametagNameFormat = config.getString("nametag.name-format", nametagPrefix + "%player_name%" + nametagSuffix);
-        boolean nametagReplaceUsernameEnabled = config.getBoolean("nametag.replace-username.enabled", false);
-        String nametagReplaceUsernameFormat = config.getString("nametag.replace-username.format", "%player_name%");
-        String nametagDisableIf = config.getString("nametag.disable-if", "");
 
         boolean belownameEnabled = config.getBoolean("belowname.enabled", true);
         long belownameUpdateIntervalTicks = Math.max(1L, config.getLong("belowname.update-interval-ticks", 20L));
@@ -98,15 +79,6 @@ public record TabConfig(
             rankPlaceholder,
             sortingDescending,
             defaultRank,
-            nametagEnabled,
-            nametagAutoAssignTeam,
-            nametagUpdateIntervalTicks,
-            nametagPrefix,
-            nametagSuffix,
-            nametagNameFormat,
-            nametagReplaceUsernameEnabled,
-            nametagReplaceUsernameFormat,
-            nametagDisableIf,
             belownameEnabled,
             belownameUpdateIntervalTicks,
             belownameTitle,
@@ -136,15 +108,6 @@ public record TabConfig(
             rankPlaceholder,
             sortingDescending,
             defaultRank,
-            nametagEnabled,
-            nametagAutoAssignTeam,
-            nametagUpdateIntervalTicks,
-            nametagPrefix,
-            nametagSuffix,
-            nametagNameFormat,
-            nametagReplaceUsernameEnabled,
-            nametagReplaceUsernameFormat,
-            nametagDisableIf,
             belownameEnabled,
             belownameUpdateIntervalTicks,
             belownameTitle,

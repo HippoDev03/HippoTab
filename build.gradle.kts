@@ -15,10 +15,16 @@ repositories {
 
 dependencies {
     compileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
+    compileOnly("net.kyori:adventure-text-minimessage:4.17.0")
     compileOnly("me.clip:placeholderapi:2.11.6")
-    compileOnly("com.github.retrooper:packetevents-spigot:2.10.1")
+    compileOnly("com.github.retrooper:packetevents-spigot:2.11.2")
+    compileOnly("net.luckperms:api:5.5")
     implementation("dev.faststats.metrics:bukkit:0.22.0")
     implementation("redis.clients:jedis:5.2.0")
+    // Nick subsystem storage backends (bundled unrelocated, matching the former
+    // HippoNick jar — relocating a JDBC driver breaks Class.forName/driverClassName).
+    implementation("com.zaxxer:HikariCP:6.3.0")
+    implementation("org.mariadb.jdbc:mariadb-java-client:3.5.7")
 }
 
 java {

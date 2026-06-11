@@ -1,0 +1,63 @@
+command:
+  player-only: "<red>Only players can use this command.</red>"
+  no-permission: "<red>You do not have permission.</red>"
+
+nick:
+  usage: "<yellow>Usage: /nick <name> [skinPlayer|skinUrl] | /nick clear</yellow>"
+  # Shown when a player runs /nick with no arguments. Use \n for new lines.
+  help:
+    - "<gold><bold>How to use /nick</bold></gold>"
+    - "<yellow>/nick <name></yellow> <gray>- choose a nickname, then pick a rank in the menu</gray>"
+    - "<yellow>/nick <name> <skin></yellow> <gray>- nickname + a skin (player name or skin URL)</gray>"
+    - "<yellow>/nick clear</yellow> <gray>(or <yellow>/unnick</yellow>) - remove your nickname</gray>"
+    - "<gray>Name: 3-16 characters (A-Z, a-z, 0-9, _). You can re-nick anytime.</gray>"
+  cleared: "<green>Nickname and rank override cleared.</green>"
+  already-cleared: "<gray>You are already unnicked.</gray>"
+  invalid-length: "<red>Nickname must be 3-16 characters (A-Z, a-z, 0-9, _).</red>"
+  blocked-online-name: "<red>You cannot use a nickname that matches any online player's real Mojang name.</red>"
+  blocked-premium-name: "<red>That name belongs to a real premium Minecraft account, so you cannot use it as a nickname.</red>"
+  invalid-skin: "<red>Skin must be a Mojang name (3-16, A-Z0-9_) or a raw http(s) skin URL.</red>"
+  skin-not-found: "<red>That skin player was not found on Mojang or has no valid skin data.</red>"
+  applied: "<green>Applied nickname <gold><nickname></gold>.</green>"
+  rank-weight-blocked: "<red>You can only choose ranks at or below your own rank weight.</red>"
+  actionbar:
+    message: "<gray>Nicked as</gray> <gold><nickname></gold> <dark_gray>|</dark_gray> <gray>Rank:</gray> <gold><rank></gold>"
+
+realname:
+  usage: "<yellow>Usage: /realname [nickname|player]</yellow>"
+  result: "<gold><display></gold><gray> -> </gray><aqua><real></aqua>"
+  not-found: "<red>No player found for query: <query></red>"
+
+nickadmin:
+  usage: "<yellow>Usage: /nickadmin setrank <player> <rank> | /nickadmin set <player> <nickname> [rank] [skin] | /nickadmin remove <player> | /nickadmin migratestorage | /nickadmin reload</yellow>"
+  unknown-subcommand: "<yellow>Unknown subcommand.</yellow>"
+  set:
+    usage: "<yellow>Usage: /nickadmin set <player> <nickname> [rank] [skin]</yellow>"
+    success: "<green>Set nick for <gold><player></gold> to <gold><nickname></gold>.</green>"
+  remove:
+    usage: "<yellow>Usage: /nickadmin remove <player></yellow>"
+    already-clear: "<gray><player> is already unnicked.</gray>"
+    success: "<green>Removed nick for <gold><player></gold>.</green>"
+  setrank:
+    usage: "<yellow>Usage: /nickadmin setrank <player> <rank></yellow>"
+    player-not-found: "<red>Player not found online: <player></red>"
+    unknown-rank: "<red>Unknown rank: <rank></red>"
+    success: "<green>Set rank override for <gold><player></gold> to <gold><rank></gold>.</green>"
+  migrate:
+    requires-mariadb: "<red>Migration requires active mariadb storage.type.</red>"
+    success: "<green>Migrated <gold><count></gold> records from file storage.</green>"
+  reload:
+    success: "<green>HippoNick config/messages reloaded.</green>"
+
+gui:
+  rank:
+    title: "Select Rank"
+    item: "<reset><gold><rank></gold>"
+    weight: "<reset><gray>Weight: <weight></gray>"
+    clear: "<red>Clear Override</red>"
+  realname:
+    title: "Nicked Players"
+    item: "<gold><nickname></gold>"
+    real: "<gray>Real:</gray> <aqua><real></aqua>"
+    rank: "<gray>Rank:</gray> <gold><rank></gold>"
+    empty: "<gray>No nicked players online.</gray>"

@@ -33,21 +33,35 @@ public final class BelowNameService {
     private final TabTextFormatter formatter;
     private final PlaceholderService placeholderService;
     private final ConditionParser conditionParser;
+    private final ClientNameResolver nameResolver;
     private BukkitTask updateTask;
     private PacketListenerAbstract displayInterceptor;
 
     private final Map<UUID, Integer> cachedScores = new ConcurrentHashMap<>();
     private final Map<UUID, String> cachedFancyValues = new ConcurrentHashMap<>();
+    // the score-entry name last sent per player (= the client-visible name). When a
+    // nick changes this changes, so the stale entry must be reset and re-sent.
+    private final Map<UUID, String> lastNames = new ConcurrentHashMap<>();
     // targets whose score is currently disabled — ResetScore already sent, avoid re-sending every tick
     private final java.util.Set<UUID> disabledScorePlayers = ConcurrentHashMap.newKeySet();
 
     public BelowNameService(JavaPlugin plugin, TabConfig config, TabTextFormatter formatter,
-                            PlaceholderService placeholderService, ConditionParser conditionParser) {
+                            PlaceholderService placeholderService, ConditionParser conditionParser,
+                            ClientNameResolver nameResolver) {
         this.plugin = plugin;
         this.config = config;
         this.formatter = formatter;
         this.placeholderService = placeholderService;
         this.conditionParser = conditionParser;
+        this.nameResolver = nameResolver;
+    }
+
+    /** Re-evaluate and re-send a player's below-name score immediately (e.g. after a nick). */
+    public void refreshPlayer(Player player) {
+        if (!config.belownameEnabled() || player == null || !player.isOnline()) {
+            return;
+        }
+        broadcastScore(player);
     }
 
     public void start() {
@@ -101,6 +115,7 @@ public final class BelowNameService {
         }
         cachedScores.clear();
         cachedFancyValues.clear();
+        lastNames.clear();
         disabledScorePlayers.clear();
     }
 
@@ -115,7 +130,8 @@ public final class BelowNameService {
         for (UUID disabledUuid : disabledScorePlayers) {
             Player disabled = Bukkit.getPlayer(disabledUuid);
             if (disabled != null) {
-                sendScore(joiner, disabled.getName(), 0, new FixedScoreFormat(Component.text("N/A")));
+                String entry = lastNames.getOrDefault(disabledUuid, nameResolver.resolve(disabled));
+                sendScore(joiner, entry, 0, new FixedScoreFormat(Component.text("N/A")));
             }
         }
         sendDisplayTo(joiner);
@@ -141,7 +157,10 @@ public final class BelowNameService {
         cachedScores.remove(player.getUniqueId());
         cachedFancyValues.remove(player.getUniqueId());
         disabledScorePlayers.remove(player.getUniqueId());
-        String name = player.getName();
+        String name = lastNames.remove(player.getUniqueId());
+        if (name == null) {
+            name = player.getName();
+        }
         for (Player viewer : Bukkit.getOnlinePlayers()) {
             if (!viewer.equals(player)) {
                 sendResetScore(viewer, name);
@@ -178,12 +197,20 @@ public final class BelowNameService {
     private void broadcastScore(Player target) {
         ScoreData data = resolveScore(target);
         UUID uuid = target.getUniqueId();
-        String name = target.getName();
+        String name = nameResolver.resolve(target);
+        String prevName = lastNames.get(uuid);
+        // A nick changes the client-visible name; the old entry must be reset.
+        boolean nameChanged = prevName != null && !prevName.equals(name);
 
         if (data == null) {
             cachedScores.remove(uuid);
             cachedFancyValues.remove(uuid);
-            if (disabledScorePlayers.add(uuid)) {
+            if (nameChanged) {
+                resetEntryForAll(prevName);
+            }
+            boolean newlyDisabled = disabledScorePlayers.add(uuid);
+            if (newlyDisabled || nameChanged) {
+                lastNames.put(uuid, name);
                 ScoreFormat naFormat = new FixedScoreFormat(Component.text(" N/A"));
                 for (Player viewer : Bukkit.getOnlinePlayers()) {
                     sendScore(viewer, name, 0, naFormat);
@@ -199,12 +226,22 @@ public final class BelowNameService {
         boolean scoreChanged = !Objects.equals(prevScore, data.score());
         boolean fancyChanged = !Objects.equals(prevFancy, data.fancyRendered());
 
-        if (!scoreChanged && !fancyChanged) {
+        if (!scoreChanged && !fancyChanged && !nameChanged) {
             return;
         }
 
+        if (nameChanged) {
+            resetEntryForAll(prevName);
+        }
+        lastNames.put(uuid, name);
         cachedScores.put(uuid, data.score());
-        cachedFancyValues.put(uuid, data.fancyRendered());
+        // fancyRendered() can be null (e.g. blank fancy-value); ConcurrentHashMap
+        // rejects null values, so remove the key instead of putting null.
+        if (data.fancyRendered() != null) {
+            cachedFancyValues.put(uuid, data.fancyRendered());
+        } else {
+            cachedFancyValues.remove(uuid);
+        }
 
         ScoreFormat format = data.fancyRendered() != null
             ? new FixedScoreFormat(formatter.toComponent(target, data.fancyRendered()))
@@ -290,7 +327,8 @@ public final class BelowNameService {
             ScoreFormat format = fancy != null
                 ? new FixedScoreFormat(formatter.toComponent(target, fancy))
                 : null;
-            sendScore(viewer, target.getName(), score, format);
+            String entry = lastNames.getOrDefault(target.getUniqueId(), nameResolver.resolve(target));
+            sendScore(viewer, entry, score, format);
         }
     }
 
@@ -300,7 +338,9 @@ public final class BelowNameService {
     }
 
     private void sendScore(Player viewer, String entityName, int score, ScoreFormat format) {
-        PacketEvents.getAPI().getPlayerManager().sendPacket(viewer,
+        // Silent: the entry name is already the client-visible (nick) name, so it must
+        // NOT be re-mapped by the nick subsystem's UPDATE_SCORE rewriter.
+        PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer,
             new WrapperPlayServerUpdateScore(
                 entityName,
                 WrapperPlayServerUpdateScore.Action.CREATE_OR_UPDATE_ITEM,
@@ -312,7 +352,17 @@ public final class BelowNameService {
     }
 
     private void sendResetScore(Player viewer, String entityName) {
-        PacketEvents.getAPI().getPlayerManager().sendPacket(viewer,
+        // Silent so the old-name reset isn't re-mapped to the new nick by the rewriter.
+        PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer,
             new WrapperPlayServerResetScore(entityName, OBJECTIVE_NAME));
+    }
+
+    private void resetEntryForAll(String entityName) {
+        if (entityName == null || entityName.isBlank()) {
+            return;
+        }
+        for (Player viewer : Bukkit.getOnlinePlayers()) {
+            sendResetScore(viewer, entityName);
+        }
     }
 }

@@ -1,19 +1,44 @@
 name: HippoTab
 version: '$version'
 
-main: net.mwtw.hippoTab.Core
+main: net.mwtw.hippoNick.Core
 api-version: '1.21'
 load: POSTWORLD
 depend: [PlaceholderAPI, packetevents]
-softdepend: [Vault, VaultUnlocked]
+softdepend: [LuckPerms, Vault, VaultUnlocked]
 
 commands:
   hippotab:
     description: Main command for HippoTab
     usage: /<command> reload
     aliases: [htab]
+  nick:
+    description: Open nickname GUI.
+    usage: /nick <name> [skinPlayer|skinUrl] | /nick clear
+    permission: hipponick.use
+  realname:
+    description: Resolve a nickname to the real player name.
+    usage: /realname [nickname|player]
+    permission: hipponick.realname
+  nickadmin:
+    description: Nick admin controls.
+    usage: /nickadmin <setrank|add|remove|migratestorage|reload>
+    permission: hipponick.admin.setrank
+  unnick:
+    description: Clear nickname and rank override.
+    usage: /unnick
+    permission: hipponick.use
 
 permissions:
   hippotab.reload:
     description: Allows reloading HippoTab configuration
+    default: op
+  hipponick.use:
+    default: op
+  hipponick.nick.premium:
+    description: Allows nicking to a name that belongs to a real premium Mojang account.
+    default: op
+  hipponick.realname:
+    default: op
+  hipponick.admin.setrank:
     default: op

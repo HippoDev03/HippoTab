@@ -1,6 +1,6 @@
 package net.mwtw.hippoTab.command;
 
-import net.mwtw.hippoTab.Core;
+import net.mwtw.hippoNick.Core;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.command.Command;
@@ -30,7 +30,7 @@ public final class HippoTabCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        plugin.reloadPluginState();
+        plugin.reloadRuntimeState();
         sender.sendMessage(Component.text("HippoTab config reloaded.", NamedTextColor.GREEN));
         return true;
     }

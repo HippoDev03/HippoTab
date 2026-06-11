@@ -29,7 +29,6 @@ public final class TabService {
     private final TabConfig config;
     private final TabTextFormatter formatter;
     private final PlaceholderService placeholderService;
-    private NameTagService nameTagService;
     private BelowNameService belowNameService;
     private final Set<UUID> hiddenTabPlayers = new HashSet<>();
     private final Map<UUID, PlayerTabState> playerStates = new ConcurrentHashMap<>();
@@ -41,10 +40,6 @@ public final class TabService {
         this.config = config;
         this.formatter = formatter;
         this.placeholderService = placeholderService;
-    }
-
-    public void setNameTagService(NameTagService nameTagService) {
-        this.nameTagService = nameTagService;
     }
 
     public void setBelowNameService(BelowNameService belowNameService) {

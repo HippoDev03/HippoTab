@@ -40,7 +40,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
-import static net.mwtw.hippoTab.Core.ERROR_TRACKER;
+import static net.mwtw.hippoTab.TabModule.ERROR_TRACKER;
 
 public final class RedisTabSyncService {
     private static final GsonComponentSerializer GSON_COMPONENT = GsonComponentSerializer.gson();
@@ -55,6 +55,7 @@ public final class RedisTabSyncService {
     private final RedisSyncConfig redisConfig;
     private final TabTextFormatter formatter;
     private final PlaceholderService placeholderService;
+    private final ClientNameResolver nameResolver;
 
     private final Map<UUID, Set<UUID>> remoteEntriesByViewer = new ConcurrentHashMap<>();
     private final Map<UUID, String> lastRemoteProfileHashes = new ConcurrentHashMap<>();
@@ -67,13 +68,16 @@ public final class RedisTabSyncService {
     private JedisPool pool;
     private BukkitTask redisTask;
     private BukkitTask tabApplyTask;
+    private BukkitTask snapshotTask;
 
-    public RedisTabSyncService(JavaPlugin plugin, TabConfig config, TabTextFormatter formatter, PlaceholderService placeholderService) {
+    public RedisTabSyncService(JavaPlugin plugin, TabConfig config, TabTextFormatter formatter,
+                               PlaceholderService placeholderService, ClientNameResolver nameResolver) {
         this.plugin = plugin;
         this.config = config;
         this.redisConfig = config.redisSync();
         this.formatter = formatter;
         this.placeholderService = placeholderService;
+        this.nameResolver = nameResolver;
     }
 
     public void start() {
@@ -119,6 +123,18 @@ public final class RedisTabSyncService {
             20L
         );
 
+        // Refresh the local-player snapshot on the MAIN thread on a timer. The async
+        // publisher then just reads the cached snapshot instead of blocking on
+        // callSyncMethod(...).get() every publish (which put O(n) player-iteration on
+        // the main thread and stalled the async thread).
+        long snapshotInterval = Math.max(1L, redisConfig.publishIntervalTicks());
+        snapshotTask = Bukkit.getScheduler().runTaskTimer(
+            plugin,
+            () -> cacheLocalSnapshot(snapshotLocalPlayers()),
+            1L,
+            snapshotInterval
+        );
+
         cacheLocalSnapshot(snapshotLocalPlayers());
 
         plugin.getLogger().info("Redis tab sync enabled for server-id=" + redisConfig.serverId());
@@ -132,6 +148,10 @@ public final class RedisTabSyncService {
         if (tabApplyTask != null) {
             tabApplyTask.cancel();
             tabApplyTask = null;
+        }
+        if (snapshotTask != null) {
+            snapshotTask.cancel();
+            snapshotTask = null;
         }
 
         removeAllRemoteEntriesFromViewers();
@@ -174,19 +194,14 @@ public final class RedisTabSyncService {
     }
 
     private List<SyncedPlayer> snapshotLocalPlayersForPublish() {
-        try {
-            if (Bukkit.isPrimaryThread()) {
-                List<SyncedPlayer> snapshot = List.copyOf(snapshotLocalPlayers());
-                cacheLocalSnapshot(snapshot);
-                return snapshot;
-            }
-            List<SyncedPlayer> snapshot = List.copyOf(Bukkit.getScheduler().callSyncMethod(plugin, this::snapshotLocalPlayers).get(1500, TimeUnit.MILLISECONDS));
+        // The snapshot is refreshed on the main thread by snapshotTask; the async
+        // publisher just reads the latest cached value (no main-thread block).
+        if (Bukkit.isPrimaryThread()) {
+            List<SyncedPlayer> snapshot = List.copyOf(snapshotLocalPlayers());
             cacheLocalSnapshot(snapshot);
             return snapshot;
-        } catch (Exception exception) {
-            plugin.getLogger().fine("Using cached local players for Redis publish due to snapshot timing: " + exception.getClass().getSimpleName());
-            return latestLocalPlayers;
         }
+        return latestLocalPlayers;
     }
 
     private List<SyncedPlayer> snapshotLocalPlayers() {
@@ -208,7 +223,9 @@ public final class RedisTabSyncService {
                 : NamedTextColor.nearestTo(team.color());
             players.add(new SyncedPlayer(
                 player.getUniqueId(),
-                player.getName(),
+                // The client-visible (possibly nicked) name, so remote servers show
+                // the nick in tab — not the real login name.
+                nameResolver.resolve(player),
                 displayName,
                 order,
                 player.getPing(),
@@ -277,8 +294,6 @@ public final class RedisTabSyncService {
     }
 
     private void applyRemoteEntriesToTab() {
-        List<SyncedPlayer> localSnapshot = latestLocalPlayers;
-        latestLocalPlayers = List.copyOf(localSnapshot);
         Set<UUID> localIds = latestLocalPlayerIds;
 
         List<SyncedPlayer> remotePlayers = latestRemotePlayers;
