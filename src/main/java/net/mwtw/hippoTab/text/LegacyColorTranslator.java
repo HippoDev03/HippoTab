@@ -35,6 +35,15 @@ public final class LegacyColorTranslator {
     }
 
     public static String toMiniMessage(String input) {
+        return toMiniMessage(input, true, true);
+    }
+
+    /**
+     * Rewrites legacy codes to MiniMessage tags, but only the kinds asked for: colour
+     * codes (0-9, a-f, hex) and/or decoration codes (k-o). A code of a kind that is not
+     * wanted is left in the text exactly as typed.
+     */
+    public static String toMiniMessage(String input, boolean colors, boolean decorations) {
         if (input == null || input.isEmpty()) {
             return "";
         }
@@ -50,7 +59,7 @@ public final class LegacyColorTranslator {
             char prefix = current;
             char code = Character.toLowerCase(input.charAt(i + 1));
 
-            if (code == '#' && i + 7 < input.length()) {
+            if (colors && code == '#' && i + 7 < input.length()) {
                 String hex = input.substring(i + 2, i + 8);
                 if (hex.matches("[A-Fa-f0-9]{6}")) {
                     out.append("<#").append(hex).append(">");
@@ -59,7 +68,7 @@ public final class LegacyColorTranslator {
                 }
             }
 
-            if (code == 'x' && i + 13 < input.length()) {
+            if (colors && code == 'x' && i + 13 < input.length()) {
                 StringBuilder hex = new StringBuilder(6);
                 boolean valid = true;
                 for (int idx = 0; idx < 6; idx++) {
@@ -84,7 +93,7 @@ public final class LegacyColorTranslator {
             }
 
             String replacement = LEGACY_TO_MINI.get(code);
-            if (replacement != null) {
+            if (replacement != null && wanted(code, colors, decorations)) {
                 out.append(replacement);
                 i++;
             } else {
@@ -93,6 +102,13 @@ public final class LegacyColorTranslator {
         }
 
         return out.toString();
+    }
+
+    private static boolean wanted(char code, boolean colors, boolean decorations) {
+        if (code == 'r') {
+            return colors || decorations;
+        }
+        return code >= 'k' && code <= 'o' ? decorations : colors;
     }
 
     private static boolean isLegacyPrefix(char character) {

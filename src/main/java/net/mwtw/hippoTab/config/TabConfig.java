@@ -15,6 +15,9 @@ public record TabConfig(
     List<String> footerLines,
     String playerListNameFormat,
     String tabHidePlayerIf,
+    String tabHideBypassPermission,
+    String tabViewGroup,
+    String tabMemberGroup,
     boolean sortingEnabled,
     String rankPlaceholder,
     boolean sortingDescending,
@@ -43,10 +46,13 @@ public record TabConfig(
         List<String> footerLines = config.getStringList("tab.footer");
         String playerListNameFormat = config.getString("tab.player-list-name", "<gray>%player_name%</gray>");
         String tabHidePlayerIf = config.getString("tab.hide-player-if", "");
+        String tabHideBypassPermission = config.getString("tab.hide-bypass-permission", "hippotab.tab.seehidden");
+        String tabViewGroup = config.getString("tab.view-group", "");
+        String tabMemberGroup = config.getString("tab.member-group", "");
 
         boolean sortingEnabled = config.getBoolean("sorting.enabled", true);
         String rankPlaceholder = config.getString("sorting.rank-placeholder", "%vaultunlocked_weight%");
-        boolean sortingDescending = config.getBoolean("sorting.descending", true);
+        boolean sortingDescending = config.getBoolean("sorting.descending", false);
         int defaultRank = config.getInt("sorting.default-rank", 0);
 
         boolean belownameEnabled = config.getBoolean("belowname.enabled", true);
@@ -75,6 +81,9 @@ public record TabConfig(
             footerLines,
             playerListNameFormat,
             tabHidePlayerIf,
+            tabHideBypassPermission,
+            tabViewGroup,
+            tabMemberGroup,
             sortingEnabled,
             rankPlaceholder,
             sortingDescending,
@@ -104,6 +113,9 @@ public record TabConfig(
             footerLines,
             playerListNameFormat,
             tabHidePlayerIf,
+            tabHideBypassPermission,
+            tabViewGroup,
+            tabMemberGroup,
             sortingEnabled,
             rankPlaceholder,
             sortingDescending,

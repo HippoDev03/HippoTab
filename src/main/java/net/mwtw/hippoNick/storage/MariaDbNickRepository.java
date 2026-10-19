@@ -27,6 +27,11 @@ public final class MariaDbNickRepository implements NickRepository {
         initializeSchema();
     }
 
+    /** The connection pool, shared with the nick history. */
+    public HikariDataSource dataSource() {
+        return dataSource;
+    }
+
     @Override
     public Optional<NickProfile> find(UUID uuid) {
         String sql = "SELECT uuid, nickname, rank_override, skin_name, updated_at FROM nick_profiles WHERE uuid = ?";
@@ -40,8 +45,8 @@ public final class MariaDbNickRepository implements NickRepository {
                 return Optional.of(map(resultSet));
             }
         } catch (SQLException exception) {
-            plugin.getLogger().log(Level.SEVERE, "Failed to fetch profile for " + uuid, exception);
-            return Optional.empty();
+            // Not Optional.empty(): the cache would remember "no nick" for the session.
+            throw new IllegalStateException("Failed to fetch profile for " + uuid, exception);
         }
     }
 

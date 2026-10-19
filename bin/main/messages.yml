@@ -1,0 +1,231 @@
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║  HippoTab 訊息檔                                                           ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+#
+# 插件送給玩家的所有文字都在這裡(指令回覆、提示、介面文字)。
+# Tab、頭頂名稱、聊天格式、加入/離開訊息這類「顯示格式」則在 config.yml。
+#
+# 格式:全部使用 MiniMessage,例如 <red>、<bold>、<gradient:red:gold>文字</gradient>。
+#       本檔不解析舊式色碼(&c)與 PlaceholderAPI。
+# 變數:每則訊息可用的變數寫在上方註解,以 <變數名稱> 的形式使用。
+#       變數的內容(玩家名稱、玩家輸入的文字)一律以純文字插入,不會被當成格式解析。
+# 關閉:標示「可留空」的訊息設為 "" 就不會發送。
+# 缺漏:本檔沒有的項目會自動使用插件內建的預設文字,更新插件後不需要重新產生檔案。
+# 重新載入:/htab reload
+#
+# 目錄
+#   command      共用
+#   hippotab     /htab
+#   connmsg      /connmsg(加入/離開訊息開關)
+#   togglechat   /togglechat(隱藏公開聊天)
+#   chatfilter   聊天過濾與 /hchat
+#   spy          私訊監聽與 /spy
+#   nick         /nick、/unnick
+#   realname     /realname
+#   nickadmin    /nickadmin
+#   nickhistory  /nickhistory
+#   gui          介面文字
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  共用
+# ─────────────────────────────────────────────────────────────────────────────
+command:
+  player-only: "<red>只有玩家可以使用此指令。</red>"
+  no-permission: "<red>你沒有權限使用此指令。</red>"
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  /htab
+# ─────────────────────────────────────────────────────────────────────────────
+hippotab:
+  usage: "<yellow>用法: /htab reload</yellow>"
+  reloaded: "<green>HippoTab 設定與訊息已重新載入。</green>"
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  /connmsg(加入/離開訊息開關)
+# ─────────────────────────────────────────────────────────────────────────────
+connmsg:
+  # <state> = 下方的 state-on 或 state-off
+  toggled: "<gray>你的<white>加入/離開</white>訊息已設為 <state><gray>。"
+  status: "<gray>加入/離開訊息: <state>"
+  state-on: "<green>開啟</green>"
+  state-off: "<red>關閉</red>"
+  usage: "<yellow>用法: /connmsg [toggle|status]</yellow>"
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  /togglechat(隱藏公開聊天)
+# ─────────────────────────────────────────────────────────────────────────────
+togglechat:
+  hidden: "<gray>已隱藏公開聊天訊息。</gray>"
+  shown: "<green>已顯示公開聊天訊息。</green>"
+  disabled: "<red>此伺服器已停用切換聊天顯示功能。</red>"
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  聊天過濾與 /hchat
+# ─────────────────────────────────────────────────────────────────────────────
+chatfilter:
+  # 發言太快被擋下時,只顯示給發送者。可留空。
+  rate-limited: "<red>你發送訊息太頻繁,請稍後再試。</red>"
+  # 重複發送相同訊息被擋下時,只顯示給發送者。可留空。
+  duplicate: "<red>請不要重複發送相同的訊息。</red>"
+  # 因洗頻被禁言時(剛被禁言,以及禁言期間再次發言)顯示。可留空。<seconds> = 剩餘秒數
+  muted: "<red>你因洗頻被禁言,還剩 <yellow><seconds></yellow> 秒。</red>"
+
+  # 仍安裝著舊的 HippoChatFilter 插件時,/hchat 的回覆。
+  standalone-installed: "<yellow>偵測到獨立的 HippoChatFilter 插件,內建聊天過濾已停用。請移除該插件後再使用內建功能。</yellow>"
+
+  # /hchat 的說明(每個項目一行)。
+  help:
+    - "<aqua><bold>聊天過濾指令</bold></aqua>"
+    - "<yellow>/hchat add <字詞></yellow> <gray>- 新增過濾字詞</gray>"
+    - "<yellow>/hchat remove <字詞></yellow> <gray>- 移除自訂字詞</gray>"
+    - "<yellow>/hchat list</yellow> <gray>- 列出自訂字詞</gray>"
+    - "<yellow>/hchat allow <文字></yellow> <gray>- 加入白名單(不遮蔽這段文字)</gray>"
+    - "<yellow>/hchat unallow <文字></yellow> <gray>- 移出白名單</gray>"
+    - "<yellow>/hchat allowed</yellow> <gray>- 列出白名單</gray>"
+    - "<yellow>/hchat test <文字></yellow> <gray>- 測試過濾結果</gray>"
+    - "<yellow>/hchat status</yellow> <gray>- 查看狀態</gray>"
+    - "<yellow>/hchat reload</yellow> <gray>- 重新載入過濾設定與詞庫</gray>"
+  reloaded: "<green>聊天過濾已重新載入,詞庫正在背景更新。</green>"
+
+  # <word> = 字詞或片語
+  word-added: "<green>已新增過濾字詞: <white><word></white></green>"
+  word-exists: "<yellow>該字詞已存在或無效。</yellow>"
+  word-removed: "<green>已移除過濾字詞: <white><word></white></green>"
+  word-not-found: "<yellow>自訂字詞中找不到: <white><word></white></yellow>"
+  allow-added: "<green>已加入白名單: <white><word></white></green>"
+  allow-exists: "<yellow>該片語已在白名單中或無效。</yellow>"
+  allow-removed: "<green>已移出白名單: <white><word></white></green>"
+  allow-not-found: "<yellow>白名單中找不到: <white><word></white></yellow>"
+
+  # <count> = 數量   <words> = 以逗號分隔的清單
+  word-list: "<aqua>自訂字詞(<count>):</aqua> <white><words></white>"
+  word-list-empty: "<yellow>目前沒有自訂字詞。</yellow>"
+  allow-list: "<aqua>白名單(<count>):</aqua> <white><words></white>"
+  allow-list-empty: "<yellow>白名單目前是空的。</yellow>"
+
+  # <enabled> = true/false   <count> = 已載入的字詞數
+  status: "<aqua>聊天過濾</aqua> <gray>啟用:</gray> <white><enabled></white> <dark_gray>|</dark_gray> <gray>已載入字詞:</gray> <white><count></white>"
+  # <input> = 輸入的文字   <output> = 過濾後的結果
+  test: "<gray>輸入:</gray> <white><input></white><newline><gray>結果:</gray> <white><output></white>"
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  私訊監聽與 /spy
+# ─────────────────────────────────────────────────────────────────────────────
+spy:
+  # 管理員看到的監聽訊息。
+  # <sender> 發送者   <target> 對象(皆為真實 ID)   <message> 內容   <server> 分流名稱
+  # 此分流的私訊:
+  format: "<dark_gray>[<gold>監聽</gold>]</dark_gray> <gray><sender> <dark_gray>→</dark_gray> <target>:</gray> <white><message></white>"
+  # 其他分流的私訊(全服模式):
+  format-network: "<dark_gray>[<gold>監聽</gold> <aqua><server></aqua>]</dark_gray> <gray><sender> <dark_gray>→</dark_gray> <target>:</gray> <white><message></white>"
+
+  mode-off: "<gray>私訊監聽: <red>關閉</red></gray>"
+  mode-server: "<gray>私訊監聽: <green>此分流</green></gray>"
+  mode-network: "<gray>私訊監聽: <aqua>全服</aqua></gray>"
+  usage: "<yellow>用法: /spy [off|server|network]</yellow>"
+  disabled: "<red>此伺服器已停用私訊監聽功能。</red>"
+  network-unavailable: "<yellow>此分流未開啟全服監聽,已改為只監聽此分流。</yellow>"
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  /nick、/unnick
+# ─────────────────────────────────────────────────────────────────────────────
+nick:
+  usage: "<yellow>用法: /nick <名稱> [皮膚玩家或皮膚網址] | /nick clear</yellow>"
+  # 只輸入 /nick 時顯示的說明(每個項目一行)。
+  help:
+    - "<gold><bold>暱稱使用說明</bold></gold>"
+    - "<yellow>/nick <名稱></yellow> <gray>- 設定暱稱,接著在選單中選擇顯示階級</gray>"
+    - "<yellow>/nick <名稱> <皮膚></yellow> <gray>- 設定暱稱並指定皮膚(玩家名稱或皮膚網址)</gray>"
+    - "<yellow>/nick clear</yellow> <gray>(或 <yellow>/unnick</yellow>) - 清除暱稱</gray>"
+    - "<gray>名稱限 3-16 個字元(A-Z、a-z、0-9、_),可隨時更換。</gray>"
+  # <nickname> = 暱稱
+  applied: "<green>已套用暱稱 <gold><nickname></gold>。</green>"
+  cleared: "<green>已清除暱稱與顯示階級。</green>"
+  already-cleared: "<gray>你目前沒有使用暱稱。</gray>"
+  invalid-length: "<red>暱稱必須是 3-16 個字元(A-Z、a-z、0-9、_)。</red>"
+  blocked-online-name: "<red>不能使用與線上玩家的真實名稱或暱稱相同的名稱。</red>"
+  blocked-premium-name: "<red>這個名稱屬於真實的正版帳號,不能當作暱稱。</red>"
+  invalid-skin: "<red>皮膚必須是正版玩家名稱(3-16 個字元),或 Mojang / NameMC 的皮膚網址。</red>"
+  skin-not-found: "<red>找不到該玩家的皮膚,或該玩家沒有有效的皮膚資料。</red>"
+  rank-weight-blocked: "<red>只能選擇權重不高於你自己階級的階級。</red>"
+  actionbar:
+    # 使用暱稱期間顯示在快捷列上方。<nickname> 暱稱   <rank> 顯示階級   <prefix> 階級前綴
+    message: "<gray>目前暱稱</gray> <gold><nickname></gold> <dark_gray>|</dark_gray> <gray>階級:</gray> <gold><rank></gold>"
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  /realname
+# ─────────────────────────────────────────────────────────────────────────────
+realname:
+  usage: "<yellow>用法: /realname [暱稱或玩家]</yellow>"
+  # <display> = 顯示名稱(暱稱)   <real> = 真實 ID
+  result: "<gold><display></gold><gray> → </gray><aqua><real></aqua>"
+  # 玩家在其他分流時。<server> = 分流名稱
+  result-network: "<gold><display></gold><gray> → </gray><aqua><real></aqua> <dark_gray>(<gray><server></gray>)</dark_gray>"
+  # <query> = 查詢的文字
+  not-found: "<red>找不到符合的玩家: <query></red>"
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  /nickadmin
+# ─────────────────────────────────────────────────────────────────────────────
+nickadmin:
+  usage: "<yellow>用法: /nickadmin set <玩家> <暱稱> [階級] [皮膚] | setrank <玩家> <階級> | remove <玩家> | migratestorage | reload</yellow>"
+  unknown-subcommand: "<yellow>未知的子指令。</yellow>"
+  set:
+    usage: "<yellow>用法: /nickadmin set <玩家> <暱稱> [階級] [皮膚]</yellow>"
+    # <player> = 玩家的真實 ID   <nickname> = 暱稱
+    success: "<green>已將 <gold><player></gold> 的暱稱設為 <gold><nickname></gold>。</green>"
+  remove:
+    usage: "<yellow>用法: /nickadmin remove <玩家></yellow>"
+    already-clear: "<gray><player> 目前沒有使用暱稱。</gray>"
+    success: "<green>已清除 <gold><player></gold> 的暱稱。</green>"
+  setrank:
+    usage: "<yellow>用法: /nickadmin setrank <玩家> <階級></yellow>"
+    player-not-found: "<red>找不到線上玩家: <player></red>"
+    # <rank> = 階級名稱
+    unknown-rank: "<red>未知的階級: <rank></red>"
+    success: "<green>已將 <gold><player></gold> 的顯示階級設為 <gold><rank></gold>。</green>"
+  migrate:
+    requires-mariadb: "<red>必須先把 storage.type 設為 mariadb 才能遷移。</red>"
+    # <count> = 遷移的筆數
+    success: "<green>已從檔案儲存遷移 <gold><count></gold> 筆資料。</green>"
+  reload:
+    success: "<green>設定與訊息已重新載入。</green>"
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  /nickhistory(暱稱紀錄)
+# ─────────────────────────────────────────────────────────────────────────────
+nickhistory:
+  usage: "<yellow>用法: /nickhistory <玩家真實 ID 或暱稱> [頁數]</yellow>"
+  # <query> = 查詢的文字   <page> = 頁數
+  empty: "<gray>找不到 <white><query></white> 的暱稱紀錄。</gray>"
+  header: "<gold><bold>暱稱紀錄</bold></gold> <gray><query> <dark_gray>|</dark_gray> 第 <page> 頁(新到舊)</gray>"
+  more: "<gray>還有更多紀錄: <yellow>/nickhistory <query> <page></yellow></gray>"
+  # 每一筆紀錄。可用變數:
+  #   <time> 時間   <player> 真實 ID   <nickname> 暱稱   <rank> 顯示階級
+  #   <skin> 皮膚   <actor> 操作者   <server> 分流名稱
+  entry-set: "<dark_gray><time></dark_gray> <aqua><player></aqua> <green>設定</green> <gold><nickname></gold> <gray>階級 <white><rank></white> 皮膚 <white><skin></white> <dark_gray>|</dark_gray> 操作者 <white><actor></white> <dark_gray>|</dark_gray> <server></gray>"
+  entry-rank: "<dark_gray><time></dark_gray> <aqua><player></aqua> <yellow>變更階級</yellow> <white><rank></white> <gray>暱稱 <gold><nickname></gold> <dark_gray>|</dark_gray> 操作者 <white><actor></white> <dark_gray>|</dark_gray> <server></gray>"
+  entry-clear: "<dark_gray><time></dark_gray> <aqua><player></aqua> <red>清除</red> <gold><nickname></gold> <gray><dark_gray>|</dark_gray> 操作者 <white><actor></white> <dark_gray>|</dark_gray> <server></gray>"
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  介面文字
+# ─────────────────────────────────────────────────────────────────────────────
+gui:
+  # /nick 的階級選擇介面
+  rank:
+    title: "<dark_gray>選擇顯示階級</dark_gray>"
+    # 階級沒有設定前綴時的物品名稱。<rank> = 階級名稱
+    item: "<gold><rank></gold>"
+    clear: "<red>清除暱稱</red>"
+  # /realname 的介面
+  realname:
+    title: "<dark_gray>使用暱稱的玩家</dark_gray>"
+    # <nickname> = 暱稱
+    item: "<gold><nickname></gold>"
+    # <real> = 真實 ID
+    real: "<gray>真實 ID:</gray> <aqua><real></aqua>"
+    # <rank> = 顯示階級
+    rank: "<gray>階級:</gray> <gold><rank></gold>"
+    # 只有其他分流的玩家才會多這一行。<server> = 分流名稱
+    server: "<gray>分流:</gray> <aqua><server></aqua>"
+    empty: "<gray>目前沒有玩家使用暱稱。</gray>"

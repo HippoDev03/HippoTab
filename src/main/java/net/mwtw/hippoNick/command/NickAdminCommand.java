@@ -5,6 +5,7 @@ import net.mwtw.hippoNick.message.MessagePlaceholder;
 import net.mwtw.hippoNick.message.Messages;
 import net.mwtw.hippoNick.service.NickManager;
 import net.mwtw.hippoNick.service.RankService;
+import net.mwtw.hippoNick.storage.CachingNickRepository;
 import net.mwtw.hippoNick.storage.MariaDbNickRepository;
 import net.mwtw.hippoNick.storage.NickRepository;
 import org.bukkit.Bukkit;
@@ -14,10 +15,7 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
 
-import java.net.MalformedURLException;
 import java.nio.file.Path;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
@@ -25,7 +23,6 @@ import java.util.Locale;
 import java.util.regex.Pattern;
 
 public final class NickAdminCommand implements CommandExecutor, TabCompleter {
-    private static final Pattern NAMEMC_IMAGE_PATH = Pattern.compile("^/i/([0-9a-fA-F]{32,64})\\.png$");
     private static final Pattern VALID_SKIN_NAME = Pattern.compile("^[A-Za-z0-9_]{3,16}$");
 
     private final Core plugin;
@@ -70,7 +67,7 @@ public final class NickAdminCommand implements CommandExecutor, TabCompleter {
     }
 
     private boolean handleSetRank(CommandSender sender, String[] args) {
-        if (!sender.hasPermission("hipponick.admin.setrank")) {
+        if (!sender.hasPermission("hippotab.nick.admin")) {
             messages.send(sender, "command.no-permission");
             return true;
         }
@@ -85,23 +82,23 @@ public final class NickAdminCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        boolean success = nickManager.setRankOverride(target, args[2]);
+        boolean success = nickManager.setRankOverride(target, args[2], actor(sender));
         if (!success) {
             messages.send(sender, "nickadmin.setrank.unknown-rank", MessagePlaceholder.of("rank", args[2]));
             return true;
         }
         messages.send(sender, "nickadmin.setrank.success",
-                MessagePlaceholder.of("player", target.getName()),
+                MessagePlaceholder.of("player", nickManager.realName(target)),
                 MessagePlaceholder.of("rank", args[2]));
         return true;
     }
 
     private boolean handleMigrate(CommandSender sender) {
-        if (!sender.hasPermission("hipponick.admin.setrank")) {
+        if (!sender.hasPermission("hippotab.nick.admin")) {
             messages.send(sender, "command.no-permission");
             return true;
         }
-        if (!(repository instanceof MariaDbNickRepository)) {
+        if (!(backend() instanceof MariaDbNickRepository)) {
             messages.send(sender, "nickadmin.migrate.requires-mariadb");
             return true;
         }
@@ -113,8 +110,17 @@ public final class NickAdminCommand implements CommandExecutor, TabCompleter {
         return true;
     }
 
+    /** Name recorded in the nick history for whoever ran the command. */
+    private String actor(CommandSender sender) {
+        return sender instanceof Player player ? nickManager.realName(player) : sender.getName();
+    }
+
+    private NickRepository backend() {
+        return repository instanceof CachingNickRepository caching ? caching.delegate() : repository;
+    }
+
     private boolean handleSet(CommandSender sender, String[] args) {
-        if (!sender.hasPermission("hipponick.admin.setrank")) {
+        if (!sender.hasPermission("hippotab.nick.admin")) {
             messages.send(sender, "command.no-permission");
             return true;
         }
@@ -160,15 +166,15 @@ public final class NickAdminCommand implements CommandExecutor, TabCompleter {
         }
 
         // Overwrites any existing nick — no need to /nickadmin remove first.
-        nickManager.setNicknameAndRank(target, nickname, rank, skin);
+        nickManager.setNicknameAndRank(target, nickname, rank, skin, actor(sender));
         messages.send(sender, "nickadmin.set.success",
-                MessagePlaceholder.of("player", target.getName()),
+                MessagePlaceholder.of("player", nickManager.realName(target)),
                 MessagePlaceholder.of("nickname", nickname));
         return true;
     }
 
     private boolean handleRemove(CommandSender sender, String[] args) {
-        if (!sender.hasPermission("hipponick.admin.setrank")) {
+        if (!sender.hasPermission("hippotab.nick.admin")) {
             messages.send(sender, "command.no-permission");
             return true;
         }
@@ -182,16 +188,16 @@ public final class NickAdminCommand implements CommandExecutor, TabCompleter {
             return true;
         }
         if (!nickManager.isNicked(target)) {
-            messages.send(sender, "nickadmin.remove.already-clear", MessagePlaceholder.of("player", target.getName()));
+            messages.send(sender, "nickadmin.remove.already-clear", MessagePlaceholder.of("player", nickManager.realName(target)));
             return true;
         }
-        nickManager.clear(target);
-        messages.send(sender, "nickadmin.remove.success", MessagePlaceholder.of("player", target.getName()));
+        nickManager.clear(target, actor(sender));
+        messages.send(sender, "nickadmin.remove.success", MessagePlaceholder.of("player", nickManager.realName(target)));
         return true;
     }
 
     private boolean handleReload(CommandSender sender) {
-        if (!sender.hasPermission("hipponick.admin.setrank")) {
+        if (!sender.hasPermission("hippotab.nick.admin")) {
             messages.send(sender, "command.no-permission");
             return true;
         }
@@ -211,9 +217,9 @@ public final class NickAdminCommand implements CommandExecutor, TabCompleter {
                 || args[0].equalsIgnoreCase("remove"))) {
             String input = args[1].toLowerCase(Locale.ROOT);
             ArrayList<String> out = new ArrayList<>();
-            for (Player player : Bukkit.getOnlinePlayers()) {
-                if (player.getName().toLowerCase(Locale.ROOT).startsWith(input)) {
-                    out.add(player.getName());
+            for (String name : nickManager.onlinePlayerNames()) {
+                if (name.toLowerCase(Locale.ROOT).startsWith(input)) {
+                    out.add(name);
                 }
             }
             return out;
@@ -236,32 +242,6 @@ public final class NickAdminCommand implements CommandExecutor, TabCompleter {
     }
 
     private URL parseSkinUrl(String raw) {
-        if (raw == null) {
-            return null;
-        }
-        try {
-            String normalized = raw.trim().replaceAll("(?i)%C2%B7+$", "");
-            while (normalized.endsWith("·")) {
-                normalized = normalized.substring(0, normalized.length() - 1);
-            }
-            URI uri = new URI(normalized);
-            String scheme = uri.getScheme();
-            if (scheme == null || (!scheme.equalsIgnoreCase("http") && !scheme.equalsIgnoreCase("https"))) {
-                return null;
-            }
-            if (uri.getHost() == null || uri.getHost().isBlank()) {
-                return null;
-            }
-            String host = uri.getHost().toLowerCase(Locale.ROOT);
-            if ("s.namemc.com".equals(host)) {
-                java.util.regex.Matcher matcher = NAMEMC_IMAGE_PATH.matcher(uri.getPath() == null ? "" : uri.getPath());
-                if (matcher.matches()) {
-                    return URI.create("https://textures.minecraft.net/texture/" + matcher.group(1)).toURL();
-                }
-            }
-            return uri.toURL();
-        } catch (URISyntaxException | MalformedURLException exception) {
-            return null;
-        }
+        return NickManager.parseSkinUrl(raw);
     }
 }

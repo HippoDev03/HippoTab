@@ -1,7 +1,8 @@
 package net.mwtw.hippoNick.gui;
 
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
+import net.kyori.adventure.text.minimessage.MiniMessage;
+import net.mwtw.hippoTab.text.LegacyColorTranslator;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.kyori.adventure.text.format.TextDecoration;
 import net.mwtw.hippoNick.Core;
@@ -32,6 +33,7 @@ import java.util.UUID;
 public final class NickGuiService implements Listener {
     private final Core plugin;
     private final NamespacedKey rankKey;
+    private final NamespacedKey clearKey;
     private final NickManager nickManager;
     private final RankService rankService;
     private final Messages messages;
@@ -40,6 +42,7 @@ public final class NickGuiService implements Listener {
     public NickGuiService(Core plugin, NickManager nickManager, RankService rankService, Messages messages) {
         this.plugin = plugin;
         this.rankKey = new NamespacedKey(plugin, "rank-id");
+        this.clearKey = new NamespacedKey(plugin, "clear-nick");
         this.nickManager = nickManager;
         this.rankService = rankService;
         this.messages = messages;
@@ -60,7 +63,7 @@ public final class NickGuiService implements Listener {
         int maxRankSlots = showClear ? size - 1 : size;
 
         RankSelectorHolder holder = new RankSelectorHolder();
-        Inventory inventory = Bukkit.createInventory(holder, size, messages.plain("gui.rank.title"));
+        Inventory inventory = Bukkit.createInventory(holder, size, messages.component("gui.rank.title"));
         holder.inventory = inventory;
         int slot = 0;
         for (RankInfo rank : ranks) {
@@ -73,8 +76,6 @@ public final class NickGuiService implements Listener {
             ItemStack item = new ItemStack(itemMaterial);
             ItemMeta meta = item.getItemMeta();
             meta.displayName(displayRank(rank).decoration(TextDecoration.ITALIC, false));
-            meta.lore(List.of(messages.component("gui.rank.weight", MessagePlaceholder.of("weight", rank.weight()))
-                    .decoration(TextDecoration.ITALIC, false)));
             meta.getPersistentDataContainer().set(rankKey, PersistentDataType.STRING, rank.name());
             item.setItemMeta(meta);
             inventory.setItem(slot++, item);
@@ -83,6 +84,7 @@ public final class NickGuiService implements Listener {
             ItemStack clear = new ItemStack(clearMaterial);
             ItemMeta clearMeta = clear.getItemMeta();
             clearMeta.displayName(messages.component("gui.rank.clear").decoration(TextDecoration.ITALIC, false));
+            clearMeta.getPersistentDataContainer().set(clearKey, PersistentDataType.BYTE, (byte) 1);
             clear.setItemMeta(clearMeta);
             inventory.setItem(size - 1, clear);
         }
@@ -111,7 +113,9 @@ public final class NickGuiService implements Listener {
         if (clicked == null || clicked.getType().isAir()) {
             return;
         }
-        if (clicked.getType() == Material.BARRIER) {
+        ItemMeta clickedMeta = clicked.getItemMeta();
+        // Marked item, not a material check: both clear-material and item-material are configurable.
+        if (clickedMeta != null && clickedMeta.getPersistentDataContainer().has(clearKey, PersistentDataType.BYTE)) {
             pendingNick.remove(player.getUniqueId());
             nickManager.clear(player);
             player.closeInventory();
@@ -119,7 +123,7 @@ public final class NickGuiService implements Listener {
             return;
         }
 
-        ItemMeta meta = clicked.getItemMeta();
+        ItemMeta meta = clickedMeta;
         if (meta == null || meta.displayName() == null) {
             return;
         }
@@ -158,11 +162,20 @@ public final class NickGuiService implements Listener {
     }
 
     private Component displayRank(RankInfo rank) {
+        // Shown with a capital first letter; the stored rank stays the exact group name.
+        String name = capitalize(rank.name());
         String prefix = rank.prefix();
         if (prefix == null || prefix.isBlank()) {
-            return messages.component("gui.rank.item", MessagePlaceholder.of("rank", rank.name()));
+            return messages.component("gui.rank.item", MessagePlaceholder.of("rank", name));
         }
-        return LegacyComponentSerializer.legacyAmpersand().deserialize(prefix + "&r " + rank.name());
+        // LuckPerms prefixes may be written with legacy codes or MiniMessage; accept both.
+        return MiniMessage.miniMessage().deserialize(
+                LegacyColorTranslator.toMiniMessage(prefix) + "<reset> " + name);
+    }
+
+    private static String capitalize(String name) {
+        return name == null || name.isEmpty()
+                ? name : Character.toUpperCase(name.charAt(0)) + name.substring(1);
     }
 
     private static final class RankSelectorHolder implements InventoryHolder {

@@ -297,24 +297,38 @@ public final class BelowNameService {
     // -------------------------------------------------------------------------
 
     private void sendObjectiveTo(Player viewer) {
+        if (!viewer.isOnline()) {
+            return;
+        }
         Component title = formatter.toComponent(null, config.belownameTitle());
-        PacketEvents.getAPI().getPlayerManager().sendPacket(viewer,
-            new WrapperPlayServerScoreboardObjective(
-                OBJECTIVE_NAME,
-                WrapperPlayServerScoreboardObjective.ObjectiveMode.CREATE,
-                title,
-                WrapperPlayServerScoreboardObjective.RenderType.INTEGER
-            ));
+        try {
+            PacketEvents.getAPI().getPlayerManager().sendPacket(viewer,
+                new WrapperPlayServerScoreboardObjective(
+                    OBJECTIVE_NAME,
+                    WrapperPlayServerScoreboardObjective.ObjectiveMode.CREATE,
+                    title,
+                    WrapperPlayServerScoreboardObjective.RenderType.INTEGER
+                ));
+        } catch (RuntimeException exception) {
+            plugin.getLogger().fine("Skipped below-name objective packet for " + viewer.getName());
+        }
     }
 
     private void sendObjectiveRemoveTo(Player viewer) {
-        PacketEvents.getAPI().getPlayerManager().sendPacket(viewer,
-            new WrapperPlayServerScoreboardObjective(
-                OBJECTIVE_NAME,
-                WrapperPlayServerScoreboardObjective.ObjectiveMode.REMOVE,
-                Component.empty(),
-                WrapperPlayServerScoreboardObjective.RenderType.INTEGER
-            ));
+        if (!viewer.isOnline()) {
+            return;
+        }
+        try {
+            PacketEvents.getAPI().getPlayerManager().sendPacket(viewer,
+                new WrapperPlayServerScoreboardObjective(
+                    OBJECTIVE_NAME,
+                    WrapperPlayServerScoreboardObjective.ObjectiveMode.REMOVE,
+                    Component.empty(),
+                    WrapperPlayServerScoreboardObjective.RenderType.INTEGER
+                ));
+        } catch (RuntimeException exception) {
+            plugin.getLogger().fine("Skipped below-name objective-remove packet for " + viewer.getName());
+        }
     }
 
     private void sendAllScoresTo(Player viewer) {
@@ -333,28 +347,51 @@ public final class BelowNameService {
     }
 
     private void sendDisplayTo(Player viewer) {
-        PacketEvents.getAPI().getPlayerManager().sendPacket(viewer,
-            new WrapperPlayServerDisplayScoreboard(BELOW_NAME_SLOT, OBJECTIVE_NAME));
+        if (!viewer.isOnline()) {
+            return;
+        }
+        try {
+            PacketEvents.getAPI().getPlayerManager().sendPacket(viewer,
+                new WrapperPlayServerDisplayScoreboard(BELOW_NAME_SLOT, OBJECTIVE_NAME));
+        } catch (RuntimeException exception) {
+            // Channel torn down mid-send (player disconnecting) — benign.
+            plugin.getLogger().fine("Skipped below-name display packet for " + viewer.getName());
+        }
     }
 
     private void sendScore(Player viewer, String entityName, int score, ScoreFormat format) {
+        if (!viewer.isOnline()) {
+            return;
+        }
         // Silent: the entry name is already the client-visible (nick) name, so it must
         // NOT be re-mapped by the nick subsystem's UPDATE_SCORE rewriter.
-        PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer,
-            new WrapperPlayServerUpdateScore(
-                entityName,
-                WrapperPlayServerUpdateScore.Action.CREATE_OR_UPDATE_ITEM,
-                OBJECTIVE_NAME,
-                score,
-                null,
-                format
-            ));
+        try {
+            PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer,
+                new WrapperPlayServerUpdateScore(
+                    entityName,
+                    WrapperPlayServerUpdateScore.Action.CREATE_OR_UPDATE_ITEM,
+                    OBJECTIVE_NAME,
+                    score,
+                    null,
+                    format
+                ));
+        } catch (RuntimeException exception) {
+            plugin.getLogger().fine("Skipped below-name score packet for " + viewer.getName());
+        }
     }
 
     private void sendResetScore(Player viewer, String entityName) {
+        if (!viewer.isOnline()) {
+            return;
+        }
         // Silent so the old-name reset isn't re-mapped to the new nick by the rewriter.
-        PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer,
-            new WrapperPlayServerResetScore(entityName, OBJECTIVE_NAME));
+        try {
+            PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer,
+                new WrapperPlayServerResetScore(entityName, OBJECTIVE_NAME));
+        } catch (RuntimeException exception) {
+            // Channel torn down mid-send (player disconnecting) — benign.
+            plugin.getLogger().fine("Skipped below-name reset packet for " + viewer.getName());
+        }
     }
 
     private void resetEntryForAll(String entityName) {

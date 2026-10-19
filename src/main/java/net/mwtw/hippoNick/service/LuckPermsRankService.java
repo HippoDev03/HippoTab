@@ -86,6 +86,19 @@ public final class LuckPermsRankService implements RankService {
         return rank == null ? Optional.empty() : Optional.of(rank.weight());
     }
 
+    @Override
+    public Optional<String> resolveMeta(String rankName, String key) {
+        if (rankName == null || rankName.isBlank() || key == null || key.isBlank()) {
+            return Optional.empty();
+        }
+        refreshIfNeeded();
+        RankInfo rank = rankCache.get(rankName.toLowerCase(Locale.ROOT));
+        if (rank == null) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(rank.meta().get(key.toLowerCase(Locale.ROOT))).filter(value -> !value.isBlank());
+    }
+
     private void refreshIfNeeded() {
         long now = System.currentTimeMillis();
         if (now - lastRefreshMillis < TimeUnit.SECONDS.toMillis(30)) {
@@ -114,8 +127,16 @@ public final class LuckPermsRankService implements RankService {
             rankCache.clear();
             for (Group group : groups.values()) {
                 int weight = group.getWeight().orElse(0);
-                String prefix = group.getCachedData().getMetaData().getPrefix();
-                RankInfo rank = new RankInfo(group.getName(), weight, prefix);
+                var metaData = group.getCachedData().getMetaData();
+                String prefix = metaData.getPrefix();
+                // Includes meta inherited from parent groups; the first value of each key wins.
+                Map<String, String> meta = new java.util.HashMap<>();
+                metaData.getMeta().forEach((key, values) -> {
+                    if (key != null && values != null && !values.isEmpty()) {
+                        meta.put(key.toLowerCase(Locale.ROOT), values.get(0));
+                    }
+                });
+                RankInfo rank = new RankInfo(group.getName(), weight, prefix, Map.copyOf(meta));
                 rankCache.put(group.getName().toLowerCase(Locale.ROOT), rank);
             }
         } catch (Exception exception) {

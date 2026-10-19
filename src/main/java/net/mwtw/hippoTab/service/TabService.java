@@ -8,7 +8,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
 
-import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -30,7 +30,9 @@ public final class TabService {
     private final TabTextFormatter formatter;
     private final PlaceholderService placeholderService;
     private BelowNameService belowNameService;
-    private final Set<UUID> hiddenTabPlayers = new HashSet<>();
+    // Per-viewer set of players currently unlisted from that viewer's tab. Hiding is
+    // per-viewer so staff with the bypass permission still see hidden (vanished) players.
+    private final Map<UUID, Set<UUID>> hiddenByViewer = new HashMap<>();
     private final Map<UUID, PlayerTabState> playerStates = new ConcurrentHashMap<>();
 
     private BukkitTask updateTask;
@@ -144,13 +146,35 @@ public final class TabService {
         }, 1L);
     }
 
-    public void removePlayer(Player player) {
+    // synchronized with syncTabVisibility: hiddenByViewer is a plain HashMap.
+    public synchronized void removePlayer(Player player) {
         if (player == null) {
             return;
         }
 
-        playerStates.remove(player.getUniqueId());
-        hiddenTabPlayers.remove(player.getUniqueId());
+        UUID playerId = player.getUniqueId();
+        playerStates.remove(playerId);
+        // Drop the leaving player as a viewer, and as a hidden entry in every other viewer's set.
+        hiddenByViewer.remove(playerId);
+        for (Set<UUID> hidden : hiddenByViewer.values()) {
+            hidden.remove(playerId);
+        }
+    }
+
+    /** Re-apply per-viewer tab visibility right now (after refreshPlayer on the changed players). */
+    public void syncVisibilityNow() {
+        if (config.tabEnabled()) {
+            syncTabVisibility();
+        }
+    }
+
+    /**
+     * The player's tab view group (config tab.view-group), or "" when they have none.
+     * A viewer with a view group only sees players whose member group equals it; see syncTabVisibility.
+     */
+    public String viewGroup(UUID playerId) {
+        PlayerTabState state = playerStates.get(playerId);
+        return state == null ? "" : state.viewGroup();
     }
 
     public void applySorting() {
@@ -183,56 +207,123 @@ public final class TabService {
         return Math.max(min, Math.min(max, value));
     }
 
-    private void syncTabVisibility() {
+    // synchronized: runs from the periodic refresh and from HippoTabApi, both async.
+    private synchronized void syncTabVisibility() {
         Set<UUID> hiddenNow = new HashSet<>();
+        Map<UUID, String> viewGroups = new HashMap<>();
+        Map<UUID, String> memberGroups = new HashMap<>();
         for (Player target : Bukkit.getOnlinePlayers()) {
             PlayerTabState state = playerStates.computeIfAbsent(target.getUniqueId(), ignored -> buildState(target));
             if (state.hidden()) {
                 hiddenNow.add(target.getUniqueId());
             }
+            viewGroups.put(target.getUniqueId(), state.viewGroup());
+            memberGroups.put(target.getUniqueId(), state.memberGroup());
         }
 
-        Collection<? extends Player> viewers = Bukkit.getOnlinePlayers();
-        Set<UUID> newlyHidden = new HashSet<>(hiddenNow);
-        newlyHidden.removeAll(hiddenTabPlayers);
-        Set<UUID> noLongerHidden = new HashSet<>(hiddenTabPlayers);
-        noLongerHidden.removeAll(hiddenNow);
+        String bypassPermission = config.tabHideBypassPermission();
+        Set<UUID> presentViewers = new HashSet<>();
 
-        for (Player viewer : viewers) {
-            for (UUID hiddenId : newlyHidden) {
+        for (Player viewer : Bukkit.getOnlinePlayers()) {
+            presentViewers.add(viewer.getUniqueId());
+
+            // Viewers with the bypass permission (OP by default) see every hidden player;
+            // they never have anything unlisted. A player is never hidden from themselves.
+            boolean canSeeHidden = bypassPermission == null || bypassPermission.isBlank()
+                || viewer.hasPermission(bypassPermission);
+
+            Set<UUID> desiredHidden = new HashSet<>();
+            if (!canSeeHidden) {
+                for (UUID hiddenId : hiddenNow) {
+                    if (!hiddenId.equals(viewer.getUniqueId())) {
+                        desiredHidden.add(hiddenId);
+                    }
+                }
+            }
+
+            // View group: a viewer with a view group (e.g. playing or spectating a match) only
+            // sees players whose MEMBER group equals it. Viewers without one see everyone.
+            // Not affected by the bypass permission — that one is only about vanish.
+            String viewerGroup = viewGroups.getOrDefault(viewer.getUniqueId(), "");
+            if (!viewerGroup.isEmpty()) {
+                for (Map.Entry<UUID, String> entry : memberGroups.entrySet()) {
+                    if (!entry.getKey().equals(viewer.getUniqueId()) && !viewerGroup.equals(entry.getValue())) {
+                        desiredHidden.add(entry.getKey());
+                    }
+                }
+            }
+
+            Set<UUID> current = hiddenByViewer.computeIfAbsent(viewer.getUniqueId(), ignored -> new HashSet<>());
+
+            // Paper only (un)lists a player the viewer can currently see: unlistPlayer is
+            // a no-op and listPlayer throws otherwise (vanish plugins, or the short
+            // hide/show a skin refresh does). Track only what was really applied, so the
+            // rest is retried on the next sync instead of being assumed done.
+            Set<UUID> applied = new HashSet<>();
+            for (UUID hiddenId : desiredHidden) {
+                if (current.contains(hiddenId)) {
+                    applied.add(hiddenId);
+                    continue;
+                }
                 Player hiddenPlayer = Bukkit.getPlayer(hiddenId);
-                if (hiddenPlayer != null) {
+                if (hiddenPlayer != null && viewer.canSee(hiddenPlayer)) {
                     viewer.unlistPlayer(hiddenPlayer);
+                    applied.add(hiddenId);
                 }
             }
-        }
 
-        for (Player viewer : viewers) {
-            for (UUID visibleId : noLongerHidden) {
-                Player visiblePlayer = Bukkit.getPlayer(visibleId);
-                if (visiblePlayer != null) {
-                    viewer.listPlayer(visiblePlayer);
+            for (UUID previouslyHidden : current) {
+                if (desiredHidden.contains(previouslyHidden)) {
+                    continue;
+                }
+                Player visiblePlayer = Bukkit.getPlayer(previouslyHidden);
+                if (visiblePlayer == null) {
+                    continue;
+                }
+                if (!relist(viewer, visiblePlayer)) {
+                    // Still unlisted on the server side; keep tracking it.
+                    applied.add(previouslyHidden);
                 }
             }
+
+            current.clear();
+            current.addAll(applied);
         }
 
-        hiddenTabPlayers.clear();
-        hiddenTabPlayers.addAll(hiddenNow);
+        hiddenByViewer.keySet().retainAll(presentViewers);
     }
 
-    private void restoreAllTabEntries() {
-        if (hiddenTabPlayers.isEmpty()) {
+    /** Lists the target for the viewer again; false when it could not be done right now. */
+    private boolean relist(Player viewer, Player target) {
+        if (!viewer.canSee(target)) {
+            return false;
+        }
+        try {
+            viewer.listPlayer(target);
+            return true;
+        } catch (IllegalStateException exception) {
+            // canSee changed between the check and the call.
+            return false;
+        }
+    }
+
+    private synchronized void restoreAllTabEntries() {
+        if (hiddenByViewer.isEmpty()) {
             return;
         }
-        for (Player viewer : Bukkit.getOnlinePlayers()) {
-            for (UUID hiddenId : hiddenTabPlayers) {
+        for (Map.Entry<UUID, Set<UUID>> entry : hiddenByViewer.entrySet()) {
+            Player viewer = Bukkit.getPlayer(entry.getKey());
+            if (viewer == null) {
+                continue;
+            }
+            for (UUID hiddenId : entry.getValue()) {
                 Player hiddenPlayer = Bukkit.getPlayer(hiddenId);
                 if (hiddenPlayer != null) {
-                    viewer.listPlayer(hiddenPlayer);
+                    relist(viewer, hiddenPlayer);
                 }
             }
         }
-        hiddenTabPlayers.clear();
+        hiddenByViewer.clear();
     }
 
     private boolean shouldHideFromTab(Player player) {
@@ -259,7 +350,23 @@ public final class TabService {
             listOrder = clamp(order, ORDER_MIN, ORDER_MAX);
         }
 
-        return new PlayerTabState(headerText, footerText, playerListNameText, listOrder, shouldHideFromTab(player));
+        String viewGroup = resolveGroup(player, config.tabViewGroup());
+        // member-group left blank = same as view-group (symmetric groups).
+        String memberExpression = config.tabMemberGroup();
+        String memberGroup = memberExpression == null || memberExpression.isBlank()
+            ? viewGroup : resolveGroup(player, memberExpression);
+        return new PlayerTabState(headerText, footerText, playerListNameText, listOrder, shouldHideFromTab(player),
+            viewGroup, memberGroup);
+    }
+
+    private String resolveGroup(Player player, String expression) {
+        if (expression == null || expression.isBlank()) {
+            return "";
+        }
+        String resolved = placeholderService.apply(player, expression);
+        // An unresolved placeholder (the providing plugin is missing) must not put everyone
+        // into one accidental group.
+        return resolved == null || resolved.contains("%") ? "" : resolved.trim();
     }
 
     private boolean isTruthy(String value) {
@@ -277,7 +384,9 @@ public final class TabService {
         String footerText,
         String playerListNameText,
         Integer listOrder,
-        boolean hidden
+        boolean hidden,
+        String viewGroup,
+        String memberGroup
     ) {
     }
 }

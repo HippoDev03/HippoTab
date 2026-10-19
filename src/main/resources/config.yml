@@ -1,7 +1,228 @@
-# =========================================================================
-# Nick subsystem (identity: nickname + display rank + skin)
-# =========================================================================
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║  HippoTab 設定檔                                                           ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+#
+# 文字格式:本檔所有顯示用的文字都支援
+#   - MiniMessage    例:<red>、<bold>、<gradient:#63d471:#233329>文字</gradient>
+#   - 舊式色碼        例:&c、&l、&#RRGGBB
+#   - PlaceholderAPI 例:%player_name%
+# 指令回覆與提示訊息不在這裡,全部放在 messages.yml。
+#
+# 重新載入:/htab reload(權限 hippotab.reload)。標示「需重啟」的項目要重開伺服器才生效。
+#
+# 目錄
+#   1. 基本設定          server-name、update-interval-ticks
+#   2. Tab 列表          tab、sorting
+#   3. 頭頂與計分板      nametag、belowname、scoreboard
+#   4. 暱稱系統          nick、storage
+#   5. 加入/離開訊息     join-quit
+#   6. 聊天              chat、chat-filter
+#   7. 私訊              private-messages
+#   8. Discord 紀錄      discord
+#   9. 跨分流同步        redis-sync
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  1. 基本設定
+# ═════════════════════════════════════════════════════════════════════════════
+
+# 這個分流的名稱。會出現在 Discord 通知、跨分流私訊監聽與暱稱紀錄裡,
+# 多個分流共用同一個頻道或資料庫時,用來分辨訊息來自哪一服。
+server-name: "我的伺服器"
+
+# Tab 列表(頁首、頁尾、玩家名稱、排序、可見性)多久更新一次,單位 tick(20 tick = 1 秒)。
+update-interval-ticks: 40
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  2. Tab 列表
+# ═════════════════════════════════════════════════════════════════════════════
+
+tab:
+  # 總開關。false = 不更動 Tab 列表的頁首、頁尾、名稱與排序。
+  enabled: true
+
+  # 頁首與頁尾,每個項目一行。
+  header:
+    - "<gradient:#63d471:#233329><bold>Hippo Network</bold></gradient>"
+    - "&7Welcome, &f%player_name%"
+  footer:
+    # %hippotab_playercount%         線上人數,不含被隱藏的玩家(例如隱身中的管理員)
+    # %hippotab_playercount_total%   實際線上人數
+    # %hippotab_playercount_hidden%  被隱藏的人數
+    - "&7Online: &f%hippotab_playercount%"
+    - "&7Store: <yellow>store.example.com</yellow>"
+
+  # 玩家在 Tab 列表中顯示的名稱。
+  # 用 %player_displayname% 才會顯示暱稱(沒有暱稱時就是原本的名稱)。
+  # %hipponick_prefix% 是長版前綴(LuckPerms 群組的 prefix),使用暱稱時會跟著 nick 選的階級。
+  player-list-name: "%hipponick_prefix% &f%player_displayname%"
+
+  # 隱藏條件:這個佔位符對某位玩家的結果是 true / 1 / yes / on 時,就把他從 Tab 列表隱藏。
+  # 通常填隱身佔位符,例如 "%hippostaff_vanished%"。留空 = 不隱藏任何人。
+  hide-player-if: ""
+  # 擁有此權限的人仍然看得到被隱藏的玩家(預設 OP 擁有)。留空 = 所有人都看不到。
+  hide-bypass-permission: "hippotab.tab.seehidden"
+
+  # 觀看群組:限制玩家在 Tab 裡看得到誰。兩個值都會以 PlaceholderAPI 針對每位玩家解析。
+  #   view-group    這位玩家「想看」哪一組。有值時,只看得到 member-group 相同的玩家,
+  #                 同分流的其他人與其他分流同步過來的玩家都會從他的 Tab 移除。
+  #                 留空(例如在大廳)= 照常看到所有人。
+  #   member-group  這位玩家「屬於」哪一組。留空 = 與 view-group 相同。
+  # 範例(對戰中的玩家與觀戰者只看到該場的玩家,觀戰者本身不會被玩家看到):
+  #   view-group: "%nexusduel_view_match_id%"
+  #   member-group: "%nexusduel_match_id%"
+  # 套用時機是每次 Tab 更新;其他插件可透過 HippoTabApi.refreshViewGroups 立即套用。
+  view-group: ""
+  member-group: ""
+
+# Tab 列表排序。
+sorting:
+  enabled: true
+  # 用來排序的數字佔位符(通常是階級權重)。
+  rank-placeholder: "%vaultunlocked_weight%"
+  # false = 數字越大排越前面;true = 反過來。
+  descending: false
+  # 佔位符解析不出數字時使用的值。
+  default-rank: 0
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  3. 頭頂與計分板
+# ═════════════════════════════════════════════════════════════════════════════
+
+# 頭頂名稱(玩家頭上的那一行)。
+# 每位玩家各自放在一個計分板隊伍裡(透過 PacketEvents 發送,不會動到伺服器的計分板)。
+nametag:
+  enabled: true
+  # 顯示在名稱「前面」。名稱本身的顏色取這段文字裡「最後一個」顏色。
+  # %hipponick_*% 只有在 nick.enabled 為 true 時才存在;關閉暱稱系統時這類佔位符會變成空白(Tab、聊天也一樣),
+  # 請改用其他階級佔位符(例如 %vaultunlocked_prefix%)。
+  # 階級前綴有長短兩種(都會跟著 nick 選的階級):
+  #   %hipponick_prefix%        長版:LuckPerms 群組的 prefix(Tab、聊天用)
+  #   %hipponick_meta_<key>%    群組 meta 的值,例如短版圖示:
+  #                             /lp group vip meta set icon "<gold>✦"  →  %hipponick_meta_icon%
+  #   群組沒有設定該 meta 時,佔位符是空白。
+  # 注意:原版會把「名稱顏色」套到整段前綴上,沒有指定顏色的文字(例如資源包圖示)會被染成名稱的顏色。
+  # 所以圖示外面要包 <white>(資源包圖示用白色才會是原圖的顏色)。
+  prefix: "<white>%hipponick_meta_icon%</white> <gray>"
+  # 顯示在名稱「後面」。
+  suffix: ""
+  # 玩家之間是否會互相推擠。因為每人各自一隊,這等於全服的玩家碰撞開關。
+  #   true = 原版行為(會互推)   false = 可以穿過彼此
+  push-players: true
+  # 多久檢查一次前綴/後綴是否改變,單位 tick。
+  update-interval-ticks: 20
+
+# 名稱下方的那一行(預設顯示血量)。
+belowname:
+  enabled: true
+  # 更新間隔,單位 tick。越小在 PvP 時越即時,但負擔也越大。
+  update-interval-ticks: 4
+  # 數值右邊顯示的固定標題。
+  title: "<red>❤"
+  # 實際的數值(必須能解析成數字)。
+  value: "%player_health%"
+  # 用來取代純數字顯示的文字。留空 = 直接顯示上面的數字。
+  fancy-value: "<red>%player_health%"
+  # fancy-value 解析結果為空時顯示的文字。
+  fancy-value-default: "<gray>NPC"
+  # 停用條件,符合時該玩家顯示 N/A。多個條件以 ; 分隔,全部符合才成立。留空 = 不停用。
+  #   world=世界名稱
+  #   %佔位符%=[值1,值2]
+  disable-condition: ""
+
+# 側邊計分板。
+scoreboard:
+  enabled: false
+  update-interval-ticks: 20
+  # true = 隱藏每行右側的紅色數字。
+  hide-number: false
+  title: " Hippo Network "
+  # 最多 15 行。
+  lines:
+    - ""
+    - " Testing FFA scoreboard "
+    - ""
+    - " danielchen.me "
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  4. 暱稱系統(暱稱 + 顯示階級 + 皮膚)
+# ═════════════════════════════════════════════════════════════════════════════
+# 指令與權限
+#   /nick <名稱> [皮膚]、/unnick       hippotab.nick.use
+#   /realname [暱稱或玩家]             hippotab.nick.realname(可顯示全服,見 nick.realname-network)
+#   /nickadmin ...                     hippotab.nick.admin
+#   /nickhistory <玩家或暱稱> [頁數]   hippotab.nick.history
+# 暱稱紀錄:每一次設定、變更階級、清除暱稱都會永久記錄(誰、什麼暱稱、何時、由誰操作),
+# 用 /nickhistory 查詢,離線玩家也查得到;以暱稱查詢則會列出用過該暱稱的人。
+# 紀錄與暱稱資料存在同一個地方(見下方 storage),並可同步送到 Discord(見 discord.nick-log)。
+
+nick:
+  # 整個暱稱系統的總開關(需重啟)。
+  # 只想用 Tab 與頭頂名稱的分流可以設為 false,頭頂名稱仍會正常運作。
+  enabled: true
+
+  # 禁止使用「真實存在的正版帳號名稱」當暱稱,避免冒充他人。
+  # 擁有 hippotab.nick.premium 的人不受限制。Mojang 查詢失敗時會放行,以免大家都無法使用。
+  block-premium-names: true
+
+  # 以下兩項決定暱稱是否真的顯示給其他玩家,一般保持開啟。
+  #   packet-name  把送給客戶端的玩家名稱改成暱稱(頭頂名稱必須靠這個才會是暱稱)。
+  #   tab-list     監聽封包,把 Tab、計分板、指令補全裡的真名換成暱稱。
+  packet-name:
+    enabled: true
+    # 暱稱不能當作名稱使用時,改用真名。
+    fallback-to-real: true
+  tab-list:
+    enabled: true
+
+  # 使用暱稱時的皮膚。
+  skin:
+    enabled: true
+    # 沒有指定皮膚時的預設來源:
+    #   nickname = 與暱稱同名的正版帳號皮膚   player = 玩家自己的皮膚   fixed = 下方 fixed-name
+    source: nickname
+    fixed-name: Notch
+    # 找不到皮膚時改用玩家自己的皮膚。
+    fallback-to-real: true
+
+  # 使用暱稱期間,在快捷列上方持續提示本人(文字在 messages.yml 的 nick.actionbar.message)。
+  actionbar:
+    enabled: true
+    interval-ticks: 10
+
+  # 介面設定(標題與文字都在 messages.yml 的 gui 區段)。
+  gui:
+    # /nick 的階級選擇介面。
+    rank:
+      # 介面高度,1 到 6 列。
+      rows: 6
+      # 每個階級使用的物品(Bukkit 材質名稱)。
+      item-material: NAME_TAG
+      # 是否在最後一格放「清除暱稱」按鈕,以及它的材質。
+      show-clear: true
+      clear-material: BARRIER
+      # true = 只能選擇權重不高於自己 LuckPerms 階級的階級。
+      restrict-by-weight: true
+    # /realname 的介面。
+    realname:
+      rows: 6
+      # 沒有人使用暱稱時顯示的物品(放在介面正中央)。
+      empty-material: BARRIER
+
+  # 讓 /realname 看得到「全服」使用暱稱的玩家,而不只是這個分流的。
+  # 各分流定時把自己分流上使用暱稱的玩家寫到 Redis,並讀取其他分流的名單;
+  # 使用下方 redis-sync 的連線設定(host、port、帳密、key-prefix、server-id),
+  # 但不需要開啟 redis-sync.enabled。想互相看到的每個分流都要開啟這一項並連到同一個 Redis。
+  # 介面會先列出此分流的玩家,再列出其他分流的(並標示分流名稱);
+  # /realname <暱稱> 也查得到其他分流的玩家。
+  realname-network:
+    enabled: false
+    # 多久更新一次名單,單位 tick(最小 20)。其他分流的資料最多會延遲這麼久。
+    update-interval-ticks: 100
+
+# 暱稱資料與暱稱紀錄的儲存位置(需重啟)。
 storage:
+  # file    存在這個分流的插件資料夾(nick-data.yml、nick-history.log)
+  # mariadb 存在資料庫;多個分流連同一個資料庫時,暱稱與紀錄會共用
   type: file
   file:
     name: nick-data.yml
@@ -14,148 +235,345 @@ storage:
     ssl: false
     pool-size: 10
 
-nick:
-  # Master switch for the whole nick subsystem (nick commands, GUIs, skins, profile
-  # rewrite, storage, %hipponick_*% placeholders, action bar, LuckPerms ranks).
-  # Set to false on servers that only want the tab list / nametag — the overhead
-  # nametag (see the `nametag` section) keeps working without nick. Changing this
-  # requires a full restart.
-  enabled: true
-  # Block nicking to a name that belongs to a REAL premium Mojang account (looked up
-  # asynchronously), so players cannot impersonate genuine accounts. Players with the
-  # permission `hipponick.nick.premium` (OP by default) bypass this. If the Mojang
-  # lookup fails (e.g. their API is down), the nick is allowed so nobody gets locked out.
-  block-premium-names: true
-  # A player's OVERHEAD nameplate is built by the client from the GameProfile
-  # name + scoreboard team prefix/suffix, so the only way to put a nick above the
-  # head is to rewrite the profile name in packets. Keep these ENABLED.
-  #   - packet-name: rewrites the profile name shown to clients -> the nick.
-  #   - tab-list:    runs the packet listener applying that rewrite to
-  #                  PLAYER_INFO / scores / tab completion.
-  tab-list:
+# ═════════════════════════════════════════════════════════════════════════════
+#  5. 加入/離開訊息
+# ═════════════════════════════════════════════════════════════════════════════
+# 玩家可用 /connmsg 開關「自己的」加入/離開訊息(加入與離開一起切換)。
+# 請用 %player_displayname% 顯示玩家名稱,這樣使用暱稱的玩家會顯示暱稱而不是真名。
+
+join-quit:
+  join:
+    # false = 完全不廣播加入訊息(原版訊息也不會出現)。
     enabled: true
-  packet-name:
+    # 沒有任何自訂權限的玩家使用的訊息。
+    default: "<gray>[<green>+</green>]</gray> <white>%player_displayname%</white> <gray>加入了伺服器</gray>"
+  quit:
     enabled: true
-    fallback-to-real: true
-  skin:
+    default: "<gray>[<red>-</red>]</gray> <white>%player_displayname%</white> <gray>離開了伺服器</gray>"
+
+  # 依權限使用不同的訊息。由上往下檢查,玩家擁有的「第一個」權限生效;都沒有就用上面的預設。
+  custom:
+    - permission: "hippotab.joinquit.vip"
+      join: "<gray>[<green>+</green>]</gray> <gold>✦ <yellow>%player_displayname%</yellow></gold> <gray>加入了伺服器</gray>"
+      quit: "<gray>[<red>-</red>]</gray> <gold>✦ <yellow>%player_displayname%</yellow></gold> <gray>離開了伺服器</gray>"
+
+  toggle:
+    # 擁有此權限才能使用 /connmsg(預設所有人都有)。
+    permission: "hippotab.joinquit.toggle"
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  6. 聊天
+# ═════════════════════════════════════════════════════════════════════════════
+
+# 聊天格式。
+chat:
+  # false = 不更動聊天格式(交給伺服器或其他插件)。聊天過濾不受這個開關影響。
+  enabled: true
+
+  # 預設格式。<message> 是玩家輸入的內容。
+  default: "%hipponick_prefix%<white>%player_displayname%</white> <dark_gray>»</dark_gray> <gray><message></gray>"
+
+  # 依權限使用不同的格式。由上往下檢查,玩家擁有的「第一個」權限生效。
+  formats:
+    - permission: "hippotab.chat.vip"
+      format: "%hipponick_prefix%<gold>✦ <white>%player_displayname%</white></gold> <dark_gray>»</dark_gray> <white><message></white>"
+
+  # 玩家在「自己輸入的訊息」裡可以使用哪些格式。
+  # 每一類可以分別開關,並各自指定需要的權限;permission 留空 = 所有人都能用。
+  # 沒有權限的人輸入這些標籤或色碼時,會原樣顯示成文字。
+  # color / decoration / gradient 只開放外觀類標籤;
+  # 可點擊、懸浮文字等互動標籤(click、hover、insertion…)只有 all 或 OP 才能用。
+  player-formatting:
+    # true = OP 不受下面的 enabled 與權限限制,可直接使用所有 MiniMessage 標籤與 & 色碼。
+    op-bypass: true
+    # 全部 MiniMessage 標籤(包含 click、hover、insertion、font 等)。
+    # 互動標籤可做出點擊執行指令的文字,只建議給管理員。
+    all:
+      enabled: false
+      permission: "hippotab.chat.minimessage"
+    # 顏色:<red>、<#ff8800>、&c、&#ff8800
+    color:
+      enabled: false
+      permission: "hippotab.chat.color"
+    # 樣式:<bold>、<italic>、<underlined>、<strikethrough>、<obfuscated>、&l &o &n &m &k
+    decoration:
+      enabled: false
+      permission: "hippotab.chat.decoration"
+    # 漸層與彩虹:<gradient:#ff0000:#00ff00>文字</gradient>、<rainbow>文字</rainbow>
+    gradient:
+      enabled: false
+      permission: "hippotab.chat.gradient"
+
+  # /togglechat:玩家可以隱藏或顯示公開聊天(只影響自己)。
+  toggle:
+    # false = 這個分流停用此功能。
     enabled: true
-    source: nickname
-    fixed-name: Notch
-    fallback-to-real: true
-  actionbar:
+    # 擁有此權限才能使用(預設只有 OP,請用權限插件發給玩家)。
+    permission: "hippotab.chat.toggle"
+
+# 聊天過濾(原 HippoChatFilter 插件的功能)。
+# 遮蔽詞庫中的字詞(每個字換成 *),並可封鎖網址、IP、網域與洗頻。
+# 管理指令 /hchat(權限 hippotab.chatfilter.admin):
+#   /hchat add <字詞>      新增過濾字詞(存在 chat-filter-words.yml)
+#   /hchat remove <字詞>   移除自訂字詞
+#   /hchat allow <文字>    加入白名單:白名單片語內的字詞不遮蔽;
+#                          若填的剛好是某個字詞本身,等於停用該字詞(用來排除公開詞庫的誤判)
+#   /hchat unallow <文字>  移出白名單
+#   /hchat list、/hchat allowed、/hchat status
+#   /hchat test <文字>     查看一段文字過濾後的結果
+# 比對時不分大小寫、全形半形、繁體簡體,一個字詞涵蓋所有寫法。
+# 若仍安裝著舊的 HippoChatFilter 插件,內建過濾會自動停用以免重複處理。
+chat-filter:
+  # 本區段所有功能的總開關。
+  enabled: true
+
+  # 是否連「字與字之間夾了空白或符號」的寫法也抓,例如 "f u c k"、"f.u.c.k"、"幹.你"。
+  # 英文字詞只有在「每個字母都被拆開」時才算,所以 "he'll" 不會被當成 "hell"。
+  # 中文沒有詞界,任何符號都會被略過;若因此誤遮了跨標點的正常句子,
+  # 可以用 /hchat allow 加入例外,或把這項設為 false。
+  ignore-separators: true
+
+  # 同一位玩家兩次 Discord 偵測通知之間至少間隔幾秒(0 = 不限制)。
+  # 下一則通知會註明中間略過了幾則,避免有人洗頻把頻道塞滿。
+  discord-cooldown-seconds: 10
+
+  # 封鎖網址(http://、https://、www. 開頭)。被擋下的訊息不會送出,也不會提示玩家。
+  block-web-urls:
+    enabled: false
+    bypass-permission: "hippotab.chatfilter.bypass.weburls"
+
+  # 偵測 IP 位址(IPv4 與 IPv6)。
+  # 命中的訊息只有發送者自己看得到,並會寫入伺服器日誌、送出 Discord 通知。
+  block-ip:
+    enabled: false
+    bypass-permission: "hippotab.chatfilter.bypass.ip"
+    # 通知要送到的 Discord 頻道 Webhook 網址。
+    discord-webhook-url: ""
+    # 連偽裝過的寫法也抓,例如 "1 dot 2 dot 3 dot 4"、"1[.]2[.]3[.]4"、全形 "１．２．３．４"。
+    # 只有「像點的分隔」才算,所以 "1_2_3_4"、座標 "100 64 200 50"、"1, 2, 3, 4" 不會誤判。
+    detect-obfuscated: true
+    # 指定位址:即使上面的 enabled 是 false,這些位址也「一律」偵測(含偽裝寫法)。
+    targets: []
+    # 範例:
+    # targets:
+    #   - 1.2.3.4
+    #   - 9.9.9.9:25565
+
+  # 偵測網域(例如其他伺服器的位址),處理方式與 block-ip 相同。
+  # 只有結尾在下方 tlds 清單裡的才算,所以 "config.yml"、"1.21" 不會誤判。
+  block-domain:
+    enabled: false
+    bypass-permission: "hippotab.chatfilter.bypass.domain"
+    # 留空 = 與 block-ip 共用同一個 Webhook。一則訊息同時命中兩者時只會送出一則合併通知。
+    discord-webhook-url: ""
+    # 連偽裝過的點也抓:"play dot example dot com"、"example[.]com"、全形。
+    detect-obfuscated: true
+    # 視為網域的頂級網域,可自行增減。
+    tlds:
+      - com
+      - net
+      - org
+      - io
+      - gg
+      - me
+      - tv
+      - xyz
+      - co
+      - info
+      - fun
+      - club
+      - online
+      - site
+      - store
+      - app
+      - dev
+      - tw
+      - cn
+      - jp
+      - asia
+
+  # ── 防洗頻 ────────────────────────────────────────────────────────────────
+  # 以下四項一起運作:repeat-limit(速度)、duplicate-limit(重複內容)負責判定,
+  # spam-penalty 決定觸發後的禁言,spam-commands 決定哪些指令也算在內。
+  # 玩家離線不會清除計數與禁言,重新登入無法重置;閒置約 15 分鐘後才會忘記。
+
+  # 頻率限制(名稱沿用舊設定):限制玩家發言的「速度」,不看內容。
+  # 在 expire-seconds 秒內發出第 max-repeats 則訊息時,該則與之後的訊息會被擋下,直到時間過去。
+  # 例:max-repeats 4、expire-seconds 3 = 3 秒內前 3 則可送出,第 4 則被擋。
+  repeat-limit:
+    enabled: false
+    max-repeats: 4
+    # 時間窗長度,最小 1 秒。
+    expire-seconds: 3
+    bypass-permission: "hippotab.chatfilter.bypass.repeat"
+
+  # 重複訊息限制:擋下相同或「幾乎相同」的訊息。
+  # 會與玩家最近送出的幾則訊息逐一比較(不只是上一則),所以輪流發兩句話、
+  # 或每次在句尾多加幾個字都擋得住。比對時忽略大小寫、空白與標點。
+  duplicate-limit:
+    enabled: false
+    # 最近的訊息裡,相似的最多可以有幾則;再發就會被擋。
+    # 例:2 = 同一句話可以發兩次,第三次被擋。
+    max-same: 2
+    # 記住最近幾則訊息用來比對。
+    history: 5
+    # 相似度達到多少(百分比)就算同一句。100 = 必須完全相同;
+    # 80 = 十個字裡改動兩個字以內仍算相同。訊息很短時,差一個字就可能低於門檻。
+    similarity: 80
+    # 超過這個秒數的舊訊息不再列入比對。設為 0 = 只要還在上面的 history 範圍內就算。
+    expire-seconds: 30
+    bypass-permission: "hippotab.chatfilter.bypass.repeat"
+
+  # 加重處罰:觸發上面任一項限制時,除了擋下該則訊息,還會禁言一段時間。
+  # 禁言期間公開聊天與下方 spam-commands 的指令都無法使用。
+  spam-penalty:
+    # false = 只擋下訊息,不禁言。
     enabled: true
-    interval-ticks: 10
-  # /nick rank-selection GUI. The title lives in messages.yml (gui.rank.title).
-  gui:
-    rank:
-      # Inventory height (1-6 rows).
-      rows: 6
-      # Item shown for each rank (any Bukkit material name).
-      item-material: NAME_TAG
-      # Show a "clear nick" button in the last slot.
-      show-clear: true
-      clear-material: BARRIER
-      # Only let players pick ranks at or below their own LuckPerms weight.
-      restrict-by-weight: true
-    # /realname admin GUI (titles/labels live in messages.yml gui.realname.*).
-    realname:
-      rows: 6
-      empty-material: BARRIER
+    # 每次觸發的禁言秒數,依序加重:第 1 次用第 1 個值,第 2 次用第 2 個……
+    # 超過清單長度後一律使用最後一個值。
+    mute-seconds: [5, 15, 60, 300]
+    # 這麼多秒內沒有再觸發,違規次數就歸零,下次從第 1 個值重新算起。
+    reset-seconds: 600
 
-# Overhead nametag (the name above a player's head). Owned by the nick subsystem:
-# each player is put in a per-player scoreboard team (via PacketEvents) whose
-# member entry is the SAME name the client sees, so the rank prefix/colour always
-# attach — for nicked and non-nicked players alike.
-nametag:
-  enabled: true
-  # Shown BEFORE the name. Supports PlaceholderAPI, MiniMessage (<red>) and legacy
-  # (&c) colours. The player name takes the LAST colour in this prefix.
-  prefix: "%hipponick_prefix%<gray>"
-  # Shown AFTER the name.
-  suffix: ""
-  # Whether players can push/collide with each other. Each player has their own
-  # scoreboard team, so this acts as a global player-collision switch.
-  #   true  = vanilla behaviour (players push each other)
-  #   false = players pass through each other (no pushing)
-  push-players: true
-  # How often (ticks) to refresh teams so rank/prefix changes are picked up.
-  update-interval-ticks: 20
+  # 把指令也納入防洗頻:清單內的指令與公開聊天共用同一組計數,
+  # 同樣受頻率限制、重複限制與禁言影響。只看頻率與是否重複,不過濾指令內容。
+  spam-commands:
+    enabled: true
+    # 指令名稱(不含 /)。別名要各自列出。
+    list: [me, say, msg, tell, w, whisper, m, pm, dm, r, reply]
 
-# =========================================================================
-# Tab list / sorting / belowname / sidebar / redis
-# =========================================================================
-update-interval-ticks: 40
+  # 詞庫來源,可以混用:
+  #   - 網址       啟動與重新載入時下載。每份都會存一份到 chat-filter-cache/,
+  #                下載失敗時改用上次存的版本,過濾不會因為主機連不上而失效。
+  #   - 檔案路徑   相對於本插件資料夾,每行一個字詞
+  #   - 單一字詞
+  wordlist:
+    - https://raw.githubusercontent.com/dablelv/dirty-cnwords/master/curse/all.txt
+    - https://raw.githubusercontent.com/coffee-and-fun/google-profanity-words/main/data/en.txt
 
-tab:
-  enabled: true
-  header:
-    - "<gradient:#63d471:#233329><bold>Hippo Network</bold></gradient>"
-    - "&7Welcome, &f%player_name%"
-  footer:
-    - "&7Online: &f%server_online%"
-    - "&7Store: <yellow>store.example.com</yellow>"
-  # Use %player_displayname% so nicknames show here (falls back to the real name).
-  player-list-name: "%vaultunlocked_prefix% &f%player_displayname%"
-  # If this resolves to true/1/yes/on for a player, hide them from the tab list.
-  hide-player-if: ""
+# ═════════════════════════════════════════════════════════════════════════════
+#  7. 私訊
+# ═════════════════════════════════════════════════════════════════════════════
+# 本插件「不提供」私訊指令,只觀察玩家在這個分流執行的私訊指令(原版或其他插件的都可以),
+# 用於管理員監聽與 Discord 紀錄。不會修改或阻擋任何指令。
+# 注意:如果私訊是由 Velocity 等代理端的插件處理,指令不會到達這個分流,就觀察不到。
 
-sorting:
-  enabled: true
-  rank-placeholder: "%vaultunlocked_weight%"
-  descending: false
-  default-rank: 0
+private-messages:
+  # 私訊指令(不含 /):格式為「指令 對象 內容」。
+  commands: [msg, tell, w, whisper, m, pm, dm]
+  # 回覆指令:格式為「指令 內容」,對象是最近一次私訊往來的人。
+  reply-commands: [r, reply]
 
-belowname:
-  enabled: true
-  # Update interval in ticks. Lower = more responsive in PvP but heavier.
-  update-interval-ticks: 4
-  # Static objective title shown above the below-name value.
-  title: "<red>❤"
-  # Numeric fallback value (still required by scoreboard internals).
-  value: "%player_health%"
-  # Fancy text value shown instead of the raw number on modern Paper versions.
-  fancy-value: "<red>%player_health%"
-  # Used when fancy-value resolves to empty.
-  fancy-value-default: "<gray>NPC"
-  # Optional: disable in specific conditions
-  disable-condition: ""
+  # 管理員監聽私訊。指令 /spy(權限 hippotab.spy):
+  #   /spy          在「關閉」與「此分流」之間切換
+  #   /spy off      關閉
+  #   /spy server   只看此分流的私訊
+  #   /spy network  看全服(所有分流)的私訊
+  # 每位管理員各自設定,重新登入與重啟後仍會保留。私訊的雙方不會收到自己的監聽訊息。
+  spy:
+    enabled: true
+    # 管理員還沒用過 /spy 時的預設模式:off、server 或 network。
+    default-mode: "off"
+    # 全服監聽:透過 Redis 在分流之間轉送私訊,使用下方 redis-sync 的連線設定
+    # (host、port、帳密、key-prefix、server-id),但不需要開啟 redis-sync.enabled。
+    # 想互相看到私訊的每個分流都要開啟這一項並連到同一個 Redis。
+    # 關閉時 /spy network 無法使用,會自動改為此分流。
+    network:
+      enabled: false
 
-scoreboard:
-  enabled: false
-  update-interval-ticks: 20
-  hide-number: false
-  title: " Hippo Network "
-  lines:
-    - ""
-    - " Testing FFA scoreboard "
-    - ""
-    - " danielchen.me "
+# ═════════════════════════════════════════════════════════════════════════════
+#  8. Discord 紀錄
+# ═════════════════════════════════════════════════════════════════════════════
+# 把這個分流的訊息單向送到 Discord(不會把 Discord 的訊息送回伺服器)。
+# 每個分流填自己頻道的 Webhook 網址,就是「一個分流一個頻道」。
+# 取得網址:Discord 頻道 → 編輯頻道 → 整合 → Webhook → 新 Webhook → 複製 Webhook 網址。
+# 使用暱稱的玩家一律顯示「真實 ID (暱稱)」,例如 Steve (Alex)。
+# 訊息會合併成批送出(約每 2 秒一批),聊天量大時也不會超過 Discord 的速率限制;
+# 玩家輸入的 @everyone 等提及不會生效。
+# 聊天過濾的 IP/網域偵測通知另外在 chat-filter.block-ip / block-domain 設定。
+#
+# 格式中可用的變數
+#   {time} 時間   {server} 分流名稱(上方 server-name)   其餘見各項說明
+
+discord:
+  # 公開聊天。記錄的是玩家「實際輸入」的內容(聊天過濾遮蔽之前)。
+  chat-log:
+    enabled: false
+    webhook-url: ""
+    # {name} 玩家,有暱稱時為「真實 ID (暱稱)」   {message} 訊息內容
+    format: "`{time}` **{name}** » {message}"
+
+  # 私訊(上方 private-messages 觀察到的指令)。
+  private-log:
+    enabled: false
+    # 留空 = 與 chat-log 送到同一個頻道。
+    webhook-url: ""
+    # {sender} 發送者   {target} 對象   {message} 訊息內容
+    format: "`{time}` ✉ **{sender}** → **{target}**: {message}"
+
+  # 伺服器開啟與關閉。
+  # 「開啟」在插件啟動完成時送出,「關閉」在插件停用時送出(正常關服或重啟)。
+  # 伺服器當機或被強制結束時來不及送出關閉訊息,只會看到下一次的開啟。
+  server-log:
+    enabled: false
+    # 留空 = 與 chat-log 送到同一個頻道。
+    webhook-url: ""
+    start-format: "`{time}` 🟢 **{server}** 伺服器已開啟"
+    stop-format: "`{time}` 🔴 **{server}** 伺服器已關閉"
+
+  # 暱稱變更(設定、變更階級、清除)。
+  nick-log:
+    enabled: false
+    # 留空 = 與 chat-log 送到同一個頻道。
+    webhook-url: ""
+    # 以嵌入訊息(embed)呈現,每次變更一則:
+    #   標題依動作區分(設定 綠 / 變更階級 黃 / 清除 紅),
+    #   欄位為 玩家(真實 ID)、暱稱、顯示階級、皮膚、操作者、分流,不適用的欄位會省略。
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  9. 跨分流同步(Redis)
+# ═════════════════════════════════════════════════════════════════════════════
+# 連線設定同時供「Tab 列表同步」、「全服私訊監聽」與「全服 /realname」使用。
 
 redis-sync:
+  # Tab 列表同步:把其他分流的玩家顯示在這個分流的 Tab 列表裡(詳見 REDIS.md)。
   enabled: false
+
+  # Redis 連線。
   host: "127.0.0.1"
   port: 6379
   username: ""
   password: ""
   database: 0
+  # Redis 鍵的前綴;要互相同步的分流必須相同。
   key-prefix: "hippotab:tab-sync"
-  # Leave blank to auto-use this server port (server-25565, etc)
+  # 這個分流的識別碼,每個分流都必須不同。留空 = 自動使用 server-<連接埠>。
   server-id: ""
-  # Redis publish + fetch interval in ticks.
+
+  # 發布與讀取的間隔,單位 tick(最小 20)。
   publish-interval-ticks: 40
-  # How long each server entry stays alive if it stops publishing.
+  # 分流停止發布後,它的玩家資料保留幾秒(最小 10)。
   entry-ttl-seconds: 30
+
+  # 以 Velocity 端維護的名單驗證同步過來的玩家(需要代理端有對應的插件寫入這些鍵)。
   velocity-registry:
     enabled: false
+    # 目前在代理上線的玩家 UUID(Redis SET)。不在裡面的玩家不會顯示。
     online-set-key: "hippotab:velocity:online"
+    # 玩家資料(Redis HASH,欄位是 UUID)。
     profiles-hash-key: "hippotab:velocity:profiles"
+    # true = 玩家必須有資料才顯示。
     require-profile: true
+    # 需要資料中含有這個權限才顯示。留空 = 不檢查。
     required-permission: ""
+    # 用資料中的前綴作為頭頂名稱前綴(需開啟下方 team-sync)。
     use-profile-prefix-for-team: true
+    # 用資料中的權重作為 Tab 排序。
     use-profile-weight-for-sorting: true
-  team-sync:
-    enabled: false
-    ignore-packet-errors: true
 
-debug:
-  client-team-packets: false
+  # 同步其他分流玩家的頭頂名稱隊伍(前綴、後綴、顏色)。
+  team-sync:
+    # 若玩家出現與計分板隊伍有關的 Network Protocol Error,請保持關閉。
+    enabled: false
+    # true = 隊伍封包發送失敗時略過,不影響 Tab 同步。
+    ignore-packet-errors: true

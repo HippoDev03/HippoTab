@@ -12,16 +12,12 @@ import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
 import org.bukkit.profile.PlayerProfile;
 
-import java.net.MalformedURLException;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
 
 public final class NickCommand implements CommandExecutor, TabCompleter {
-    private static final Pattern NAMEMC_IMAGE_PATH = Pattern.compile("^/i/([0-9a-fA-F]{32,64})\\.png$");
     private static final Pattern VALID_SKIN_NAME = Pattern.compile("^[A-Za-z0-9_]{3,16}$");
 
     private final Core plugin;
@@ -42,7 +38,7 @@ public final class NickCommand implements CommandExecutor, TabCompleter {
             messages.send(sender, "command.player-only");
             return true;
         }
-        if (!player.hasPermission("hipponick.use")) {
+        if (!player.hasPermission("hippotab.nick.use")) {
             messages.send(player, "command.no-permission");
             return true;
         }
@@ -98,14 +94,14 @@ public final class NickCommand implements CommandExecutor, TabCompleter {
 
     /**
      * Blocks nicknames that match a REAL premium Mojang account, so players cannot
-     * impersonate genuine accounts. Players with {@code hipponick.nick.premium} (OP by
+     * impersonate genuine accounts. Players with {@code hippotab.nick.premium} (OP by
      * default) bypass this, as does disabling {@code nick.block-premium-names}. The
      * Mojang lookup is async; on lookup failure we fail open (allow) so an outage does
      * not lock everyone out of nicking.
      */
     private void guardPremiumName(Player player, String nickname, Runnable onAllowed) {
         if (!plugin.getConfig().getBoolean("nick.block-premium-names", true)
-                || player.hasPermission("hipponick.nick.premium")) {
+                || player.hasPermission("hippotab.nick.premium")) {
             onAllowed.run();
             return;
         }
@@ -188,32 +184,6 @@ public final class NickCommand implements CommandExecutor, TabCompleter {
     }
 
     private URL parseSkinUrl(String raw) {
-        if (raw == null) {
-            return null;
-        }
-        try {
-            String normalized = raw.trim().replaceAll("(?i)%C2%B7+$", "");
-            while (normalized.endsWith("·")) {
-                normalized = normalized.substring(0, normalized.length() - 1);
-            }
-            URI uri = new URI(normalized);
-            String scheme = uri.getScheme();
-            if (scheme == null || (!scheme.equalsIgnoreCase("http") && !scheme.equalsIgnoreCase("https"))) {
-                return null;
-            }
-            if (uri.getHost() == null || uri.getHost().isBlank()) {
-                return null;
-            }
-            String host = uri.getHost().toLowerCase(Locale.ROOT);
-            if ("s.namemc.com".equals(host)) {
-                java.util.regex.Matcher matcher = NAMEMC_IMAGE_PATH.matcher(uri.getPath() == null ? "" : uri.getPath());
-                if (matcher.matches()) {
-                    return URI.create("https://textures.minecraft.net/texture/" + matcher.group(1)).toURL();
-                }
-            }
-            return uri.toURL();
-        } catch (URISyntaxException | MalformedURLException exception) {
-            return null;
-        }
+        return NickManager.parseSkinUrl(raw);
     }
 }

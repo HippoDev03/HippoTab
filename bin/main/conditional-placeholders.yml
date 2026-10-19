@@ -1,0 +1,8 @@
+# Custom conditional placeholders exposed as %hippotab_<key>%
+#
+# Example:
+# hide_rank:
+#   placeholder: "%player_world%"
+#   rules:
+#     - "==world;%phoenix_player_rank_prefix%"
+#     - "''"

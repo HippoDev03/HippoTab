@@ -65,6 +65,8 @@ public final class RedisTabSyncService {
     private volatile List<SyncedPlayer> latestRemotePlayers = List.of();
     private volatile List<SyncedPlayer> latestLocalPlayers = List.of();
     private volatile Set<UUID> latestLocalPlayerIds = Set.of();
+    // Viewer -> tab view group ("" = none). Viewers in a group get no remote entries.
+    private volatile java.util.function.Function<UUID, String> viewGroupLookup = ignored -> "";
     private JedisPool pool;
     private BukkitTask redisTask;
     private BukkitTask tabApplyTask;
@@ -78,6 +80,10 @@ public final class RedisTabSyncService {
         this.formatter = formatter;
         this.placeholderService = placeholderService;
         this.nameResolver = nameResolver;
+    }
+
+    public void setViewGroupLookup(java.util.function.Function<UUID, String> lookup) {
+        this.viewGroupLookup = lookup == null ? ignored -> "" : lookup;
     }
 
     public void start() {
@@ -167,6 +173,16 @@ public final class RedisTabSyncService {
         if (pool != null) {
             pool.close();
             pool = null;
+        }
+    }
+
+    /**
+     * Forget what a viewer was sent. Called on join and quit: a reconnecting client
+     * starts with an empty tab, so every remote entry (and team) must be sent again.
+     */
+    public synchronized void resetViewer(UUID viewerId) {
+        if (viewerId != null) {
+            remoteEntriesByViewer.remove(viewerId);
         }
     }
 
@@ -293,7 +309,15 @@ public final class RedisTabSyncService {
         return remote;
     }
 
-    private void applyRemoteEntriesToTab() {
+    /** Re-apply remote entries right now (a viewer's view group just changed). */
+    public void applyNow() {
+        if (pool != null) {
+            applyRemoteEntriesToTab();
+        }
+    }
+
+    // synchronized: runs from the periodic task and from applyNow(), both async.
+    private synchronized void applyRemoteEntriesToTab() {
         Set<UUID> localIds = latestLocalPlayerIds;
 
         List<SyncedPlayer> remotePlayers = latestRemotePlayers;
@@ -308,7 +332,7 @@ public final class RedisTabSyncService {
         Map<UUID, WrapperPlayServerPlayerInfoUpdate.PlayerInfo> playerInfosById = new HashMap<>();
 
         for (SyncedPlayer remote : remotePlayers) {
-            if (localIds.contains(remote.uuid())) {
+            if (isLocalPlayer(remote.uuid(), localIds)) {
                 continue;
             }
             if (remote.name() == null || remote.name().isBlank()) {
@@ -362,6 +386,36 @@ public final class RedisTabSyncService {
         for (Player viewer : viewers) {
             onlineViewers.add(viewer.getUniqueId());
             Set<UUID> previousIds = remoteEntriesByViewer.computeIfAbsent(viewer.getUniqueId(), ignored -> new HashSet<>());
+            // A viewer in a view group (e.g. playing a match) only sees that group, and remote
+            // players are never part of a local group: drop every remote entry right away
+            // (no grace period). They come back as new entries once the viewer leaves the group.
+            // Entries whose player has since joined THIS server (a server switch) now
+            // belong to the real local player. Removing them would wipe that player from
+            // the viewer's tab and stop the client spawning them, so just stop tracking
+            // them; only the fake team goes, or it would keep owning their nametag.
+            Set<UUID> arrivedLocally = new HashSet<>();
+            for (UUID previousId : previousIds) {
+                if (isLocalPlayer(previousId, localIds)) {
+                    arrivedLocally.add(previousId);
+                }
+            }
+            if (!arrivedLocally.isEmpty()) {
+                previousIds.removeAll(arrivedLocally);
+                if (redisConfig.teamSyncEnabled()) {
+                    removeRemoteTeams(viewer, arrivedLocally);
+                }
+            }
+            String viewerGroup = viewGroupLookup.apply(viewer.getUniqueId());
+            if (viewerGroup != null && !viewerGroup.isEmpty()) {
+                if (!previousIds.isEmpty()) {
+                    PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer, new WrapperPlayServerPlayerInfoRemove(new ArrayList<>(previousIds)));
+                    if (redisConfig.teamSyncEnabled()) {
+                        removeRemoteTeams(viewer, previousIds);
+                    }
+                    previousIds.clear();
+                }
+                continue;
+            }
             Set<UUID> profileRefreshIds = new HashSet<>(profileRefreshCandidates);
             profileRefreshIds.retainAll(previousIds);
 
@@ -436,6 +490,11 @@ public final class RedisTabSyncService {
         lastSeenRemoteAt.keySet().removeIf(uuid -> !targetIds.contains(uuid) && !trackedByAnyViewer.contains(uuid));
     }
 
+    private boolean isLocalPlayer(UUID uuid, Set<UUID> localIds) {
+        // The snapshot can lag a tick or two behind a join, so ask the server as well.
+        return localIds.contains(uuid) || Bukkit.getPlayer(uuid) != null;
+    }
+
     private void cacheLocalSnapshot(List<SyncedPlayer> snapshot) {
         latestLocalPlayers = List.copyOf(snapshot);
         Set<UUID> localIds = new HashSet<>();
@@ -445,15 +504,20 @@ public final class RedisTabSyncService {
         latestLocalPlayerIds = Set.copyOf(localIds);
     }
 
-    private void removeAllRemoteEntriesFromViewers() {
+    private synchronized void removeAllRemoteEntriesFromViewers() {
         for (Player viewer : Bukkit.getOnlinePlayers()) {
-            Set<UUID> remoteIds = remoteEntriesByViewer.get(viewer.getUniqueId());
-            if (remoteIds == null || remoteIds.isEmpty()) {
+            Set<UUID> tracked = remoteEntriesByViewer.get(viewer.getUniqueId());
+            if (tracked == null || tracked.isEmpty()) {
                 continue;
             }
-            PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer, new WrapperPlayServerPlayerInfoRemove(new ArrayList<>(remoteIds)));
+            Set<UUID> remoteIds = new HashSet<>(tracked);
             if (redisConfig.teamSyncEnabled()) {
                 removeRemoteTeams(viewer, remoteIds);
+            }
+            // Never remove the tab entry of a player who is really on this server.
+            remoteIds.removeIf(uuid -> Bukkit.getPlayer(uuid) != null);
+            if (!remoteIds.isEmpty()) {
+                PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer, new WrapperPlayServerPlayerInfoRemove(new ArrayList<>(remoteIds)));
             }
         }
     }

@@ -9,6 +9,16 @@ import java.util.UUID;
 public interface NickRepository extends AutoCloseable {
     Optional<NickProfile> find(UUID uuid);
 
+    /**
+     * Like {@link #find(UUID)} but never blocks on the storage backend: answers from the
+     * in-memory cache only. On a miss a caching repository starts loading the profile in
+     * the background and returns empty for now, so a later call gets the real answer.
+     * For callers that run on the main thread with players who may be offline (placeholders).
+     */
+    default Optional<NickProfile> findCached(UUID uuid) {
+        return find(uuid);
+    }
+
     Collection<NickProfile> findAll();
 
     void save(NickProfile profile);

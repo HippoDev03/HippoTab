@@ -3,6 +3,7 @@ package net.mwtw.hippoNick.service;
 import net.mwtw.hippoNick.Core;
 import net.mwtw.hippoNick.domain.DisplayState;
 import net.mwtw.hippoNick.domain.NickProfile;
+import net.mwtw.hippoNick.history.NickHistoryService;
 import net.mwtw.hippoNick.storage.FileNickRepository;
 import net.mwtw.hippoNick.storage.NickRepository;
 import org.bukkit.Bukkit;
@@ -34,6 +35,8 @@ public final class NickManager {
     private static final Pattern NAMEMC_IMAGE_PATH = Pattern.compile("^/i/([0-9a-fA-F]{32,64})\\.png$");
     private static final Pattern VALID_NICKNAME = Pattern.compile("^[A-Za-z0-9_]{3,16}$");
     private static final Pattern VALID_SKIN_NAME = Pattern.compile("^[A-Za-z0-9_]{3,16}$");
+    // Actor recorded in the nick history when a nick is dropped because of a name clash.
+    private static final String NAME_CONFLICT_ACTOR = "系統(名稱衝突)";
 
     private final Core plugin;
     private final NickRepository repository;
@@ -43,6 +46,11 @@ public final class NickManager {
     private final Map<UUID, Set<com.destroystokyo.paper.profile.ProfileProperty>> originalProfileProperties = new ConcurrentHashMap<>();
     private final Map<UUID, String> appliedSkinSource = new ConcurrentHashMap<>();
     private final Map<UUID, String> appliedPacketName = new ConcurrentHashMap<>();
+    // The login name per online player. setPlayerProfile() renames the server-side
+    // GameProfile, so player.getName() returns the NICK while nicked — every place that
+    // needs the real name must go through realName(player) instead.
+    private final Map<UUID, String> realNames = new ConcurrentHashMap<>();
+    private NickHistoryService history;
 
     public NickManager(Core plugin, NickRepository repository, RankService rankService, NametagService nametagService) {
         this.plugin = plugin;
@@ -55,7 +63,22 @@ public final class NickManager {
         setNicknameAndRank(player, nickname, rankOverride, null);
     }
 
+    public void setHistory(NickHistoryService history) {
+        this.history = history;
+    }
+
+    private void record(Player player, String action, String nickname, String rank, String skin, String actor) {
+        if (history != null) {
+            history.record(player.getUniqueId(), realName(player), action, nickname, rank, skin, actor);
+        }
+    }
+
     public void setNicknameAndRank(Player player, String nickname, String rankOverride, String skinName) {
+        setNicknameAndRank(player, nickname, rankOverride, skinName, realName(player));
+    }
+
+    /** @param actor who made the change (a real name, or the console), for the nick history */
+    public void setNicknameAndRank(Player player, String nickname, String rankOverride, String skinName, String actor) {
         if (!isValidEnglishNickname(nickname)) {
             throw new IllegalArgumentException("Nickname must be 3-16 characters: letters, digits or underscore.");
         }
@@ -63,15 +86,25 @@ public final class NickManager {
                 .orElse(new NickProfile(player.getUniqueId(), null, null, null, Instant.now()));
         profile = profile.withNickname(nickname).withRankOverride(rankOverride).withSkinName(skinName);
         repository.save(profile);
+        record(player, NickHistoryService.SET, nickname, rankOverride, skinName, actor);
         applyDisplay(player);
     }
 
     public void clear(Player player) {
+        clear(player, realName(player));
+    }
+
+    public void clear(Player player, String actor) {
+        Optional<NickProfile> previous = repository.find(player.getUniqueId());
         repository.delete(player.getUniqueId());
+        if (previous.isPresent()) {
+            record(player, NickHistoryService.CLEAR,
+                    previous.get().nickname(), previous.get().rankOverride(), null, actor);
+        }
         applyDisplay(player);
     }
 
-    public boolean setRankOverride(Player player, String rankOverride) {
+    public boolean setRankOverride(Player player, String rankOverride, String actor) {
         Optional<String> canonical = rankService.findCanonicalRank(rankOverride);
         if (canonical.isEmpty()) {
             return false;
@@ -79,8 +112,111 @@ public final class NickManager {
         NickProfile profile = repository.find(player.getUniqueId())
                 .orElse(new NickProfile(player.getUniqueId(), null, null, null, Instant.now()));
         repository.save(profile.withRankOverride(canonical.get()));
+        record(player, NickHistoryService.RANK, profile.nickname(), canonical.get(), null, actor);
         applyDisplay(player);
         return true;
+    }
+
+    /** Records the login name; call on join BEFORE any profile rewrite. */
+    public void rememberRealName(Player player) {
+        realNames.put(player.getUniqueId(), player.getName());
+    }
+
+    /** The player's real login name, even while their profile is renamed to a nick. */
+    public String realName(Player player) {
+        String remembered = realNames.get(player.getUniqueId());
+        return remembered == null ? player.getName() : remembered;
+    }
+
+    /** The player's current nickname, or null when they are not nicked. */
+    public String nicknameOf(Player player) {
+        return repository.find(player.getUniqueId())
+                .map(NickProfile::nickname)
+                .filter(value -> !value.isBlank())
+                .orElse(null);
+    }
+
+    /**
+     * Applies a stored nick during PlayerJoinEvent, before the join message is built and
+     * before the player is listed for anyone — so the real name never reaches other
+     * clients. The overhead nametag and tab entry follow on the normal join path.
+     */
+    public void applyOnJoin(Player player) {
+        Optional<NickProfile> profile = repository.find(player.getUniqueId());
+        boolean nicked = profile.map(NickProfile::nickname).filter(value -> !value.isBlank()).isPresent();
+        if (!nicked) {
+            return;
+        }
+        DisplayState state = resolveDisplay(player, profile);
+        applyBukkitNames(player, state.effectiveName());
+        syncProfile(player, profile, state);
+    }
+
+    /**
+     * Resolves name collisions caused by a join: an online player nicked as the joiner's
+     * real name loses that nick, and the joiner's own stored nick is dropped when it now
+     * matches someone online. Returns the players whose nick was cleared.
+     */
+    public List<Player> clearConflictingNicks(Player joined) {
+        ArrayList<Player> cleared = new ArrayList<>();
+        String real = realName(joined);
+        for (Player online : Bukkit.getOnlinePlayers()) {
+            if (online.getUniqueId().equals(joined.getUniqueId())) {
+                continue;
+            }
+            String nick = nicknameOf(online);
+            if (nick != null && nick.equalsIgnoreCase(real)) {
+                clear(online, NAME_CONFLICT_ACTOR);
+                cleared.add(online);
+            }
+        }
+        String ownNick = nicknameOf(joined);
+        if (ownNick != null && conflictsWithOnlineRealName(joined, ownNick)) {
+            repository.delete(joined.getUniqueId());
+            record(joined, NickHistoryService.CLEAR, ownNick, null, null, NAME_CONFLICT_ACTOR);
+            cleared.add(joined);
+        }
+        return cleared;
+    }
+
+    /**
+     * Puts the real profile name back right now, without scheduling anything. Used on
+     * quit (Paper removes the player from its by-name index using the CURRENT profile
+     * name, so a still-renamed profile would leave the real-name entry behind) and on
+     * plugin disable.
+     */
+    public void restoreRealProfileNow(Player player) {
+        UUID uuid = player.getUniqueId();
+        String real = realNames.get(uuid);
+        if (real == null || real.equals(player.getName())) {
+            return;
+        }
+        try {
+            com.destroystokyo.paper.profile.PlayerProfile restored = Bukkit.createProfile(uuid, real);
+            Set<com.destroystokyo.paper.profile.ProfileProperty> originalProps = originalProfileProperties.get(uuid);
+            if (hasTextureProperty(originalProps)) {
+                restored.setProperties(originalProps);
+            } else {
+                restored.setProperties(player.getPlayerProfile().getProperties());
+            }
+            player.setPlayerProfile(restored);
+        } catch (RuntimeException exception) {
+            plugin.getLogger().warning("Could not restore the real profile name for " + real + ": " + exception.getMessage());
+        }
+    }
+
+    /** Plugin disable: hand every renamed profile back, the maps die with the plugin. */
+    public void shutdown() {
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            restoreRealProfileNow(player);
+            if (hasRuntimeProfileState(player.getUniqueId())) {
+                restoreBukkitNames(player);
+            }
+        }
+        originalProfiles.clear();
+        originalProfileProperties.clear();
+        appliedSkinSource.clear();
+        appliedPacketName.clear();
     }
 
     public void applyDisplay(Player player) {
@@ -152,13 +288,13 @@ public final class NickManager {
     public String resolvePacketProfileName(Player player) {
         DisplayState display = resolveDisplay(player);
         String resolved = resolvePacketName(player, display.effectiveName());
-        return resolved == null || resolved.isBlank() ? player.getName() : resolved;
+        return resolved == null || resolved.isBlank() ? realName(player) : resolved;
     }
 
     private DisplayState resolveDisplay(Player player, Optional<NickProfile> profile) {
         String effectiveName = profile.map(NickProfile::nickname)
                 .filter(s -> !s.isBlank())
-                .orElse(player.getName());
+                .orElse(realName(player));
         String effectiveRank = profile.map(NickProfile::rankOverride)
                 .filter(s -> !s.isBlank())
                 .orElse(rankService.resolveBaseRank(player));
@@ -166,7 +302,8 @@ public final class NickManager {
     }
 
     public DisplayState resolveStoredDisplay(UUID uuid, String realNameFallback) {
-        Optional<NickProfile> profile = repository.find(uuid);
+        // Offline player, asked from a placeholder on the main thread: never query storage here.
+        Optional<NickProfile> profile = repository.findCached(uuid);
         String effectiveName = profile.map(NickProfile::nickname)
                 .filter(s -> !s.isBlank())
                 .orElse(realNameFallback == null ? "" : realNameFallback);
@@ -176,8 +313,13 @@ public final class NickManager {
         return new DisplayState(effectiveName, effectiveRank);
     }
 
+    /**
+     * The stored profile, without ever blocking on storage: online players are always
+     * cached (warmed at login); an offline player's profile is loaded in the background
+     * on first request and reads as empty until that finishes.
+     */
     public Optional<NickProfile> findProfile(UUID uuid) {
-        return repository.find(uuid);
+        return repository.findCached(uuid);
     }
 
     public Optional<Player> resolveRealPlayer(String query) {
@@ -223,20 +365,31 @@ public final class NickManager {
 
     public Collection<String> onlinePlayerNames() {
         return Bukkit.getOnlinePlayers().stream()
-                .map(Player::getName)
+                .map(this::realName)
                 .collect(Collectors.toCollection(ArrayList::new));
     }
 
+    /**
+     * True when the nickname equals an online player's real name (including the player's
+     * own) or the nick another online player is already using.
+     */
     public boolean conflictsWithOnlineRealName(Player self, String nickname) {
         if (nickname == null || nickname.isBlank()) {
             return false;
         }
         for (Player online : Bukkit.getOnlinePlayers()) {
-            if (online.getName().equalsIgnoreCase(nickname)) {
+            if (realName(online).equalsIgnoreCase(nickname)) {
+                return true;
+            }
+            if (self != null && online.getUniqueId().equals(self.getUniqueId())) {
+                continue;
+            }
+            String otherNick = nicknameOf(online);
+            if (otherNick != null && otherNick.equalsIgnoreCase(nickname)) {
                 return true;
             }
         }
-        return self != null && self.getName().equalsIgnoreCase(nickname);
+        return false;
     }
 
     public static boolean isValidEnglishNickname(String nickname) {
@@ -258,6 +411,7 @@ public final class NickManager {
         originalProfileProperties.remove(uuid);
         appliedSkinSource.remove(uuid);
         appliedPacketName.remove(uuid);
+        realNames.remove(uuid);
         repository.invalidate(uuid);
     }
 
@@ -288,7 +442,7 @@ public final class NickManager {
 
         String packetName = resolvePacketName(player, state.effectiveName());
         if (packetName == null) {
-            packetName = player.getName();
+            packetName = realName(player);
         }
 
         boolean skinEnabled = plugin.getConfig().getBoolean("nick.skin.enabled", false);
@@ -297,7 +451,7 @@ public final class NickManager {
                 ? resolveDefaultSkinSource(player, state.effectiveName())
                 : parseSkinSource(customSkin);
         if (skinEnabled && skinSource == null) {
-            skinSource = SkinSource.forMojangName(player.getName());
+            skinSource = SkinSource.forMojangName(realName(player));
         }
         String skinSourceKey = skinSource == null ? null : skinSource.sourceKey();
         String current = appliedSkinSource.get(player.getUniqueId());
@@ -307,6 +461,7 @@ public final class NickManager {
             return;
         }
 
+        realNames.putIfAbsent(player.getUniqueId(), player.getName());
         originalProfiles.putIfAbsent(player.getUniqueId(), player.getPlayerProfile().clone());
         if (player.getPlayerProfile() instanceof com.destroystokyo.paper.profile.PlayerProfile paperProfile) {
             originalProfileProperties.putIfAbsent(player.getUniqueId(), new HashSet<>(paperProfile.getProperties()));
@@ -329,10 +484,18 @@ public final class NickManager {
             return;
         }
 
+        // The skin lookup below is async. Rename right away with the current textures so
+        // the nick is in place immediately (matters on join); the skin follows.
+        if (!packetName.equalsIgnoreCase(currentPacketName == null ? "" : currentPacketName)) {
+            applyProfile(player, packetName, player.getPlayerProfile());
+            appliedPacketName.put(player.getUniqueId(), packetName);
+        }
+
         String skinName = skinSource.mojangName();
         com.destroystokyo.paper.profile.PlayerProfile lookup = Bukkit.createProfile(skinName);
         final String finalSkinName = skinSource.sourceKey();
         final String finalPacketName = packetName;
+        final String loggedName = realName(player);
         lookup.update().thenAccept(updated -> Bukkit.getScheduler().runTask(plugin, () -> {
             Player online = Bukkit.getPlayer(player.getUniqueId());
             if (online == null || !online.isOnline() || !isNicked(online)) {
@@ -342,7 +505,7 @@ public final class NickManager {
             appliedSkinSource.put(online.getUniqueId(), finalSkinName);
             appliedPacketName.put(online.getUniqueId(), finalPacketName);
         })).exceptionally(error -> {
-            plugin.getLogger().warning("Failed to update skin for " + player.getName() + " via source " + finalSkinName);
+            plugin.getLogger().warning("Failed to update skin for " + loggedName + " via source " + finalSkinName);
             Bukkit.getScheduler().runTask(plugin, () -> {
                 Player online = Bukkit.getPlayer(player.getUniqueId());
                 if (online == null || !online.isOnline() || !isNicked(online)) {
@@ -361,7 +524,8 @@ public final class NickManager {
         Set<com.destroystokyo.paper.profile.ProfileProperty> originalProps = originalProfileProperties.remove(uuid);
         String removedSkinSource = appliedSkinSource.remove(uuid);
         String removedPacketName = appliedPacketName.remove(uuid);
-        String realName = player.getName();
+        // NOT player.getName(): the profile is still renamed to the nick at this point.
+        String realName = realName(player);
         boolean hadRuntimeRewrite = original != null
                 || (originalProps != null && !originalProps.isEmpty())
                 || removedSkinSource != null
@@ -418,7 +582,7 @@ public final class NickManager {
                 return;
             }
             com.destroystokyo.paper.profile.PlayerProfile finalProfile =
-                    Bukkit.createProfile(online.getUniqueId(), online.getName());
+                    Bukkit.createProfile(online.getUniqueId(), realName);
             finalProfile.setProperties(updated.getProperties());
             online.setPlayerProfile(finalProfile);
             refreshForViewers(online);
@@ -485,7 +649,7 @@ public final class NickManager {
         String mode = plugin.getConfig().getString("nick.skin.source", "nickname");
         String raw;
         if ("player".equalsIgnoreCase(mode)) {
-            raw = player.getName();
+            raw = realName(player);
         } else if ("fixed".equalsIgnoreCase(mode)) {
             raw = plugin.getConfig().getString("nick.skin.fixed-name", "");
         } else {
@@ -496,21 +660,21 @@ public final class NickManager {
             return SkinSource.forMojangName(candidate);
         }
         if (plugin.getConfig().getBoolean("nick.skin.fallback-to-real", true)) {
-            return SkinSource.forMojangName(player.getName());
+            return SkinSource.forMojangName(realName(player));
         }
         return null;
     }
 
     private String resolvePacketName(Player player, String effectiveName) {
         if (!plugin.getConfig().getBoolean("nick.packet-name.enabled", true)) {
-            return player.getName();
+            return realName(player);
         }
         String candidate = sanitizeSkinName(effectiveName);
         if (candidate != null) {
             return candidate;
         }
         if (plugin.getConfig().getBoolean("nick.packet-name.fallback-to-real", true)) {
-            return player.getName();
+            return realName(player);
         }
         return null;
     }
@@ -539,7 +703,12 @@ public final class NickManager {
         return null;
     }
 
-    private URL parseSkinUrl(String raw) {
+    /**
+     * Parses a skin texture URL, or returns null when it is not one the client will load.
+     * NameMC image links are mapped to the underlying Mojang texture; any other host must
+     * be a Mojang texture host, because the vanilla client refuses textures from elsewhere.
+     */
+    public static URL parseSkinUrl(String raw) {
         if (raw == null) {
             return null;
         }
@@ -562,6 +731,9 @@ public final class NickManager {
                 if (matcher.matches()) {
                     return URI.create("https://textures.minecraft.net/texture/" + matcher.group(1)).toURL();
                 }
+            }
+            if (!host.endsWith(".minecraft.net") && !host.endsWith(".mojang.com")) {
+                return null;
             }
             return uri.toURL();
         } catch (URISyntaxException | MalformedURLException exception) {

@@ -113,7 +113,7 @@ public final class TabPacketNameService {
             }
             Component displayName = info.getDisplayName();
             if (displayName != null) {
-                info.setDisplayName(replaceNameInComponent(displayName, target.getName(), packetName));
+                info.setDisplayName(replaceNameInComponent(displayName, nickManager.realName(target), packetName));
             }
             changed = true;
         }
@@ -138,7 +138,7 @@ public final class TabPacketNameService {
             }
             Component displayName = data.getDisplayName();
             if (displayName != null) {
-                data.setDisplayName(replaceNameInComponent(displayName, target.getName(), packetName));
+                data.setDisplayName(replaceNameInComponent(displayName, nickManager.realName(target), packetName));
             }
             changed = true;
         }
@@ -200,16 +200,9 @@ public final class TabPacketNameService {
         boolean changed = false;
         for (String member : members) {
             String replacement = member;
-            // Try real name lookup first, then scan nicked players by real name
+            // getPlayerExact is keyed by the real login name and already case-insensitive;
+            // no per-member scan of every online player on the packet thread.
             Player online = Bukkit.getPlayerExact(member);
-            if (online == null) {
-                for (Player p : Bukkit.getOnlinePlayers()) {
-                    if (p.getName().equalsIgnoreCase(member) && nickManager.isNicked(p)) {
-                        online = p;
-                        break;
-                    }
-                }
-            }
             if (online != null && nickManager.isNicked(online)) {
                 replacement = nickManager.resolvePacketProfileName(online);
             }

@@ -37,7 +37,7 @@ public final class CommandNicknameBridgeListener implements Listener {
             if (resolved.isEmpty()) {
                 continue;
             }
-            String real = resolved.get().getName();
+            String real = nickManager.realName(resolved.get());
             if (real.equalsIgnoreCase(token)) {
                 continue;
             }

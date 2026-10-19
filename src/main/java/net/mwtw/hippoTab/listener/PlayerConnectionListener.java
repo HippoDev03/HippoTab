@@ -49,6 +49,7 @@ public final class PlayerConnectionListener implements Listener {
             tabService.applySorting();
             belowNameService.onPlayerJoin(event.getPlayer());
             sidebarScoreboardService.updatePlayer(event.getPlayer());
+            redisTabSyncService.resetViewer(event.getPlayer().getUniqueId());
             redisTabSyncService.handleConnectionChange();
         });
     }
@@ -70,6 +71,7 @@ public final class PlayerConnectionListener implements Listener {
             tabService.removePlayer(event.getPlayer());
             belowNameService.removePlayer(event.getPlayer());
             sidebarScoreboardService.removePlayer(event.getPlayer());
+            redisTabSyncService.resetViewer(event.getPlayer().getUniqueId());
             redisTabSyncService.handleConnectionChange();
         });
     }

@@ -56,9 +56,16 @@ public final class HippoNickPlaceholderExpansion extends PlaceholderExpansion {
                 : nickManager.resolveStoredDisplay(offlinePlayer.getUniqueId(), offlinePlayer.getName());
         Optional<NickProfile> profile = nickManager.findProfile(offlinePlayer.getUniqueId());
 
-        return switch (params.toLowerCase()) {
+        String lower = params.toLowerCase();
+        // %hipponick_meta_<key>%: a meta value of the rank being shown (the nick's rank
+        // while nicked), e.g. a short icon for the nametag next to the full prefix.
+        if (lower.startsWith("meta_")) {
+            return rankService.resolveMeta(display.effectiveRank(), lower.substring("meta_".length())).orElse("");
+        }
+        return switch (lower) {
             case "nickname" -> profile.map(NickProfile::nickname).filter(s -> !s.isBlank()).orElse("");
-            case "realname" -> offlinePlayer.getName() == null ? "" : offlinePlayer.getName();
+            case "realname" -> player != null ? nickManager.realName(player)
+                    : offlinePlayer.getName() == null ? "" : offlinePlayer.getName();
             case "rank" -> display.effectiveRank();
             case "weight", "rank_weight", "nick_weight" ->
                     rankService.resolveWeight(display.effectiveRank()).map(String::valueOf).orElse("0");

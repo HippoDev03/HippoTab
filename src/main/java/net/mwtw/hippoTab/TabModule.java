@@ -61,6 +61,7 @@ public final class TabModule {
 
     public void start() {
         metrics.ready();
+        net.mwtw.hippoTab.api.HippoTabApi.bind(this);
         plugin.saveResource("conditional-placeholders.yml", false);
         placeholderService = new PlaceholderService(plugin);
         conditionParser = new ConditionParser(placeholderService);
@@ -92,6 +93,7 @@ public final class TabModule {
 
         placeholderService.setConditionalPlaceholders(tabConfig.conditionalPlaceholders());
         tabService.setBelowNameService(belowNameService);
+        redisTabSyncService.setViewGroupLookup(tabService::viewGroup);
 
         if (playerConnectionListener != null) {
             HandlerList.unregisterAll(playerConnectionListener);
@@ -107,6 +109,7 @@ public final class TabModule {
     }
 
     public void stop() {
+        net.mwtw.hippoTab.api.HippoTabApi.bind(null);
         metrics.shutdown();
         if (tabService != null) {
             tabService.stop();
@@ -141,6 +144,33 @@ public final class TabModule {
                 belowNameService.refreshPlayer(player);
             }
         });
+    }
+
+    /** See {@link net.mwtw.hippoTab.api.HippoTabApi#refreshViewGroups}. */
+    public void refreshViewGroups(java.util.Collection<? extends Player> players) {
+        java.util.List<Player> targets = java.util.List.copyOf(players);
+        // One tick later: the calling plugin may still be in the middle of changing its state.
+        Bukkit.getScheduler().runTaskLaterAsynchronously(plugin, () -> {
+            TabService tabs = tabService;
+            if (tabs == null) {
+                return;
+            }
+            for (Player player : targets) {
+                if (player.isOnline()) {
+                    tabs.refreshPlayer(player);
+                }
+            }
+            tabs.syncVisibilityNow();
+            if (redisTabSyncService != null) {
+                redisTabSyncService.applyNow();
+            }
+        }, 1L);
+        // Match start/end and spectating are where overhead nametags were seen falling back to
+        // the bare name; put the nametag team membership back now and once more a bit later.
+        if (plugin instanceof net.mwtw.hippoNick.Core core) {
+            Bukkit.getScheduler().runTaskLaterAsynchronously(plugin, () -> core.reassertNametags(targets), 2L);
+            Bukkit.getScheduler().runTaskLaterAsynchronously(plugin, () -> core.reassertNametags(targets), 40L);
+        }
     }
 
     private YamlConfiguration loadConditionalPlaceholderConfig() {

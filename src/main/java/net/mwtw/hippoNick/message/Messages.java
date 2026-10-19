@@ -10,10 +10,33 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.YamlConfiguration;
 
 import java.io.File;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
+/**
+ * Every player-facing text of the plugin, from messages.yml (MiniMessage). Keys missing
+ * from the server's file fall back to the messages.yml bundled in the jar, so new
+ * messages work without regenerating the file.
+ */
 public final class Messages {
+    // Texts that used to live in config.yml. A server that customised one there keeps
+    // it until the key is written into its messages.yml.
+    private static final Map<String, String> LEGACY_CONFIG_PATHS = Map.ofEntries(
+            Map.entry("connmsg.toggled", "join-quit.messages.toggled"),
+            Map.entry("connmsg.status", "join-quit.messages.status"),
+            Map.entry("connmsg.state-on", "join-quit.messages.state-on"),
+            Map.entry("connmsg.state-off", "join-quit.messages.state-off"),
+            Map.entry("connmsg.usage", "join-quit.messages.usage"),
+            Map.entry("togglechat.hidden", "chat.messages.chat-hidden"),
+            Map.entry("togglechat.shown", "chat.messages.chat-shown"),
+            Map.entry("togglechat.disabled", "chat.messages.toggle-disabled"),
+            Map.entry("chatfilter.rate-limited", "chat-filter.repeat-limit.message"),
+            Map.entry("chatfilter.duplicate", "chat-filter.duplicate-limit.message"));
+
     private final Core plugin;
     private final MiniMessage miniMessage;
     private YamlConfiguration yaml;
@@ -30,6 +53,14 @@ public final class Messages {
             plugin.saveResource("messages.yml", false);
         }
         this.yaml = YamlConfiguration.loadConfiguration(file);
+        try (InputStream bundled = plugin.getResource("messages.yml")) {
+            if (bundled != null) {
+                yaml.setDefaults(YamlConfiguration.loadConfiguration(
+                        new InputStreamReader(bundled, StandardCharsets.UTF_8)));
+            }
+        } catch (Exception exception) {
+            plugin.getLogger().warning("Could not read the bundled messages.yml: " + exception.getMessage());
+        }
     }
 
     public void send(CommandSender sender, String key, MessagePlaceholder... placeholders) {
@@ -43,26 +74,49 @@ public final class Messages {
             send(sender, key, placeholders);
             return;
         }
-        List<TagResolver> resolvers = new ArrayList<>();
-        for (MessagePlaceholder placeholder : placeholders) {
-            resolvers.add(Placeholder.unparsed(placeholder.key(), placeholder.value()));
-        }
-        TagResolver resolver = TagResolver.resolver(resolvers);
+        TagResolver resolver = resolver(placeholders);
         for (String line : lines) {
             sender.sendMessage(miniMessage.deserialize(line, resolver));
         }
     }
 
     public Component component(String key, MessagePlaceholder... placeholders) {
-        String template = yaml.getString(key, "<red>Missing message key:</red> <gray>" + key + "</gray>");
-        List<TagResolver> resolvers = new ArrayList<>();
-        for (MessagePlaceholder placeholder : placeholders) {
-            resolvers.add(Placeholder.unparsed(placeholder.key(), placeholder.value()));
-        }
-        return miniMessage.deserialize(template, TagResolver.resolver(resolvers));
+        return miniMessage.deserialize(template(key), resolver(placeholders));
+    }
+
+    /** Like {@link #component(String, MessagePlaceholder...)} with extra tags (e.g. a component placeholder). */
+    public Component component(String key, TagResolver extra, MessagePlaceholder... placeholders) {
+        return miniMessage.deserialize(template(key), TagResolver.resolver(extra, resolver(placeholders)));
     }
 
     public String plain(String key, MessagePlaceholder... placeholders) {
         return PlainTextComponentSerializer.plainText().serialize(component(key, placeholders));
+    }
+
+    /** True when the message is set to an empty string, i.e. the server turned it off. */
+    public boolean isBlank(String key) {
+        return template(key).isBlank();
+    }
+
+    private String template(String key) {
+        if (!yaml.isSet(key)) {
+            String legacyPath = LEGACY_CONFIG_PATHS.get(key);
+            if (legacyPath != null && plugin.getConfig().isSet(legacyPath)) {
+                String legacy = plugin.getConfig().getString(legacyPath);
+                if (legacy != null) {
+                    return legacy;
+                }
+            }
+        }
+        return yaml.getString(key, "<red>Missing message key:</red> <gray>" + key + "</gray>");
+    }
+
+    // Unparsed: values are player names, nicknames and typed text, never markup.
+    private static TagResolver resolver(MessagePlaceholder... placeholders) {
+        List<TagResolver> resolvers = new ArrayList<>(placeholders.length);
+        for (MessagePlaceholder placeholder : placeholders) {
+            resolvers.add(Placeholder.unparsed(placeholder.key(), placeholder.value()));
+        }
+        return TagResolver.resolver(resolvers);
     }
 }

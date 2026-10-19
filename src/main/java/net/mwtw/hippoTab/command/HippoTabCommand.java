@@ -1,8 +1,7 @@
 package net.mwtw.hippoTab.command;
 
 import net.mwtw.hippoNick.Core;
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
+import net.mwtw.hippoNick.message.Messages;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -13,25 +12,27 @@ import java.util.List;
 
 public final class HippoTabCommand implements CommandExecutor, TabCompleter {
     private final Core plugin;
+    private final Messages messages;
 
-    public HippoTabCommand(Core plugin) {
+    public HippoTabCommand(Core plugin, Messages messages) {
         this.plugin = plugin;
+        this.messages = messages;
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (args.length != 1 || !args[0].equalsIgnoreCase("reload")) {
-            sender.sendMessage(Component.text("Usage: /" + label + " reload", NamedTextColor.RED));
+            messages.send(sender, "hippotab.usage");
             return true;
         }
 
         if (!sender.hasPermission("hippotab.reload")) {
-            sender.sendMessage(Component.text("You do not have permission to use this command.", NamedTextColor.RED));
+            messages.send(sender, "command.no-permission");
             return true;
         }
 
         plugin.reloadRuntimeState();
-        sender.sendMessage(Component.text("HippoTab config reloaded.", NamedTextColor.GREEN));
+        messages.send(sender, "hippotab.reloaded");
         return true;
     }
 

@@ -12,33 +12,143 @@ commands:
     description: Main command for HippoTab
     usage: /<command> reload
     aliases: [htab]
+  connmsg:
+    description: Toggle your own join/quit (connection) messages.
+    usage: /<command> <toggle|status>
+    aliases: [cm]
+  togglechat:
+    description: Hide or show public chat for yourself.
+    usage: /<command>
+    aliases: [tc, chattoggle]
+  hchat:
+    description: Manage the chat filter.
+    usage: /<command> <reload|add|remove|list|allow|unallow|allowed|status|test>
+    aliases: [hippochatfilter]
+    permission: hippotab.chatfilter.admin
+  spy:
+    description: Choose which private messages you monitor.
+    usage: /<command> [off|server|network]
+    aliases: [socialspy]
+    permission: hippotab.spy
+  nickhistory:
+    description: Look up the nick history of a player or nickname.
+    usage: /<command> <player|nickname> [page]
+    aliases: [nickhist]
+    permission: hippotab.nick.history
   nick:
     description: Open nickname GUI.
     usage: /nick <name> [skinPlayer|skinUrl] | /nick clear
-    permission: hipponick.use
+    permission: hippotab.nick.use
   realname:
     description: Resolve a nickname to the real player name.
     usage: /realname [nickname|player]
-    permission: hipponick.realname
+    permission: hippotab.nick.realname
   nickadmin:
     description: Nick admin controls.
     usage: /nickadmin <setrank|add|remove|migratestorage|reload>
-    permission: hipponick.admin.setrank
+    permission: hippotab.nick.admin
   unnick:
     description: Clear nickname and rank override.
     usage: /unnick
-    permission: hipponick.use
+    permission: hippotab.nick.use
 
 permissions:
   hippotab.reload:
     description: Allows reloading HippoTab configuration
     default: op
-  hipponick.use:
+  hippotab.tab.seehidden:
+    description: See players hidden from the tab list (e.g. vanished staff)
     default: op
-  hipponick.nick.premium:
+  hippotab.joinquit.toggle:
+    description: Allows toggling your own join/quit messages with /connmsg
+    default: true
+  hippotab.chat.toggle:
+    description: Allows hiding/showing public chat for yourself with /togglechat
+    default: op
+  hippotab.chat.color:
+    description: Allows colours (<red>, <#ff8800>, &c) in your own chat messages
+    default: op
+  hippotab.chat.decoration:
+    description: Allows decorations (<bold>, <italic>, &l ...) in your own chat messages
+    default: op
+  hippotab.chat.gradient:
+    description: Allows <gradient> and <rainbow> in your own chat messages
+    default: op
+  hippotab.chat.minimessage:
+    description: Allows every MiniMessage tag (incl. click/hover) in your own chat messages
+    default: op
+  hippotab.spy:
+    description: Allows monitoring players' private messages with /spy
+    default: op
+  hippotab.nick.history:
+    description: Allows /nickhistory
+    default: op
+  hippotab.chatfilter.admin:
+    description: Allows managing chat filter words and reloading its config
+    default: op
+  hippotab.chatfilter.bypass.weburls:
+    description: Allows sending web URLs when URL blocking is enabled
+    default: op
+  hippotab.chatfilter.bypass.ip:
+    description: Allows sending messages containing IP addresses without restriction
+    default: op
+  hippotab.chatfilter.bypass.domain:
+    description: Allows sending messages containing domain names without restriction
+    default: op
+  hippotab.chatfilter.bypass.repeat:
+    description: Allows sending messages without the chat rate and duplicate limits
+    default: op
+  hippotab.nick.use:
+    description: Allows /nick and /unnick
+    default: op
+  hippotab.nick.premium:
     description: Allows nicking to a name that belongs to a real premium Mojang account.
     default: op
+  hippotab.nick.realname:
+    description: Allows /realname
+    default: op
+  hippotab.nick.admin:
+    description: Allows /nickadmin
+    default: op
+
+  # ---------------------------------------------------------------------------
+  # Old node names from the separate HippoNick / HippoChatFilter plugins. The plugin
+  # only checks the hippotab.* nodes above; each old node just grants its new one, so
+  # existing permission setups keep working. Safe to delete once those are migrated.
+  # ---------------------------------------------------------------------------
+  hipponick.use:
+    default: false
+    children:
+      hippotab.nick.use: true
+  hipponick.nick.premium:
+    default: false
+    children:
+      hippotab.nick.premium: true
   hipponick.realname:
-    default: op
+    default: false
+    children:
+      hippotab.nick.realname: true
   hipponick.admin.setrank:
-    default: op
+    default: false
+    children:
+      hippotab.nick.admin: true
+  hippochatfilter.admin:
+    default: false
+    children:
+      hippotab.chatfilter.admin: true
+  hippochatfilter.bypass.weburls:
+    default: false
+    children:
+      hippotab.chatfilter.bypass.weburls: true
+  hippochatfilter.bypass.ip:
+    default: false
+    children:
+      hippotab.chatfilter.bypass.ip: true
+  hippochatfilter.bypass.domain:
+    default: false
+    children:
+      hippotab.chatfilter.bypass.domain: true
+  hippochatfilter.bypass.repeat:
+    default: false
+    children:
+      hippotab.chatfilter.bypass.repeat: true

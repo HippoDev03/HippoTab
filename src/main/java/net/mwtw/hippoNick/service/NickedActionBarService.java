@@ -1,8 +1,11 @@
 package net.mwtw.hippoNick.service;
 
+import net.kyori.adventure.text.minimessage.MiniMessage;
+import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.mwtw.hippoNick.Core;
 import net.mwtw.hippoNick.message.MessagePlaceholder;
 import net.mwtw.hippoNick.message.Messages;
+import net.mwtw.hippoTab.text.LegacyColorTranslator;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 
@@ -33,11 +36,14 @@ public final class NickedActionBarService {
                 }
                 var display = nickManager.resolveDisplay(player);
                 String prefix = rankService.resolvePrefix(display.effectiveRank()).orElse("");
+                // The prefix is LuckPerms markup (legacy codes or MiniMessage, fonts included),
+                // so it is rendered rather than inserted as literal text.
                 player.sendActionBar(messages.component(
                         "nick.actionbar.message",
+                        Placeholder.component("prefix", MiniMessage.miniMessage().deserialize(
+                                LegacyColorTranslator.toMiniMessage(prefix))),
                         MessagePlaceholder.of("nickname", display.effectiveName()),
-                        MessagePlaceholder.of("rank", display.effectiveRank()),
-                        MessagePlaceholder.of("prefix", prefix)
+                        MessagePlaceholder.of("rank", display.effectiveRank())
                 ));
             }
         }, 1L, period);

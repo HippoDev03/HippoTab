@@ -16,4 +16,7 @@ public interface RankService {
     Optional<String> resolvePrefix(String rankName);
 
     Optional<Integer> resolveWeight(String rankName);
+
+    /** A meta value of the rank's group, e.g. a short icon set with {@code meta set icon ...}. */
+    Optional<String> resolveMeta(String rankName, String key);
 }
