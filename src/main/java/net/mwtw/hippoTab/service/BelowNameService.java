@@ -44,6 +44,10 @@ public final class BelowNameService {
     private final Map<UUID, String> lastNames = new ConcurrentHashMap<>();
     // targets whose score is currently disabled — ResetScore already sent, avoid re-sending every tick
     private final java.util.Set<UUID> disabledScorePlayers = ConcurrentHashMap.newKeySet();
+    // viewers whose client currently has the objective. Score packets run on async threads and would
+    // otherwise reach a just-joined (or just-reset) client before the CREATE, which logs
+    // "Received packet for unknown scoreboard objective".
+    private final java.util.Set<UUID> readyViewers = ConcurrentHashMap.newKeySet();
 
     public BelowNameService(JavaPlugin plugin, TabConfig config, TabTextFormatter formatter,
                             PlaceholderService placeholderService, ConditionParser conditionParser,
@@ -117,6 +121,7 @@ public final class BelowNameService {
         cachedFancyValues.clear();
         lastNames.clear();
         disabledScorePlayers.clear();
+        readyViewers.clear();
     }
 
     public void onPlayerJoin(Player joiner) {
@@ -154,6 +159,7 @@ public final class BelowNameService {
     }
 
     public void removePlayer(Player player) {
+        readyViewers.remove(player.getUniqueId());
         cachedScores.remove(player.getUniqueId());
         cachedFancyValues.remove(player.getUniqueId());
         disabledScorePlayers.remove(player.getUniqueId());
@@ -309,12 +315,14 @@ public final class BelowNameService {
                     title,
                     WrapperPlayServerScoreboardObjective.RenderType.INTEGER
                 ));
+            readyViewers.add(viewer.getUniqueId());
         } catch (RuntimeException exception) {
             plugin.getLogger().fine("Skipped below-name objective packet for " + viewer.getName());
         }
     }
 
     private void sendObjectiveRemoveTo(Player viewer) {
+        readyViewers.remove(viewer.getUniqueId());
         if (!viewer.isOnline()) {
             return;
         }
@@ -360,7 +368,7 @@ public final class BelowNameService {
     }
 
     private void sendScore(Player viewer, String entityName, int score, ScoreFormat format) {
-        if (!viewer.isOnline()) {
+        if (!viewer.isOnline() || !readyViewers.contains(viewer.getUniqueId())) {
             return;
         }
         // Silent: the entry name is already the client-visible (nick) name, so it must
@@ -381,7 +389,7 @@ public final class BelowNameService {
     }
 
     private void sendResetScore(Player viewer, String entityName) {
-        if (!viewer.isOnline()) {
+        if (!viewer.isOnline() || !readyViewers.contains(viewer.getUniqueId())) {
             return;
         }
         // Silent so the old-name reset isn't re-mapped to the new nick by the rewriter.

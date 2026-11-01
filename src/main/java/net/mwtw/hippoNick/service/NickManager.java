@@ -598,16 +598,28 @@ public final class NickManager {
     }
 
     private void applyProfile(Player player, String packetName, org.bukkit.profile.PlayerProfile sourceProfile) {
-        com.destroystokyo.paper.profile.PlayerProfile rewritten =
-                Bukkit.createProfile(player.getUniqueId(), packetName);
-        if (sourceProfile instanceof com.destroystokyo.paper.profile.PlayerProfile paperSource
-                && hasTextureProperty(paperSource)) {
-            rewritten.setProperties(paperSource.getProperties());
-        } else {
-            rewritten.setTextures(sourceProfile.getTextures());
+        try {
+            com.destroystokyo.paper.profile.PlayerProfile rewritten =
+                    Bukkit.createProfile(player.getUniqueId(), packetName);
+            if (sourceProfile instanceof com.destroystokyo.paper.profile.PlayerProfile paperSource
+                    && hasTextureProperty(paperSource)) {
+                rewritten.setProperties(paperSource.getProperties());
+            } else {
+                rewritten.setTextures(sourceProfile.getTextures());
+            }
+            player.setPlayerProfile(rewritten);
+            if (!packetName.equals(player.getName())) {
+                // setPlayerProfile 沒丟例外,但 getName() 事後讀回來卻不是剛剛改的名字——
+                // 代表伺服器端其實沒有真的套用上去(例如被其他監聽同一個事件的外掛擋下來、
+                // 或這個 Paper 版本對這支 API 的行為跟預期不一樣),印出來才找得到。
+                plugin.getLogger().warning("setPlayerProfile 後 " + player.getName()
+                        + " 的 getName() 沒有變成預期的 " + packetName + "，暱稱可能沒有真的套用成功");
+            }
+            refreshForViewers(player);
+        } catch (RuntimeException exception) {
+            plugin.getLogger().log(java.util.logging.Level.WARNING,
+                    "套用暱稱 " + packetName + " 到 " + player.getName() + " 時發生例外", exception);
         }
-        player.setPlayerProfile(rewritten);
-        refreshForViewers(player);
     }
 
     private void applyProfileWithSkinUrl(Player player, String packetName, URL skinUrl, String sourceKey) {

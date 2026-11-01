@@ -56,6 +56,11 @@ tab:
   # %hipponick_prefix% 是長版前綴(LuckPerms 群組的 prefix),使用暱稱時會跟著 nick 選的階級。
   player-list-name: "%hipponick_prefix% &f%player_displayname%"
 
+  # 指令的玩家名稱補全(例如 /tell、/tp 按 Tab 時)只列出「這個分流上、看得到的」玩家。
+  # 原版是由客戶端用自己的 Tab 列表補全,會把其他分流同步過來的玩家、NPC 也列出來。
+  # 只影響原版/Brigadier 指令;其他插件自己的補全不受影響。改了之後玩家需重新進入伺服器。
+  local-player-suggestions: true
+
   # 隱藏條件:這個佔位符對某位玩家的結果是 true / 1 / yes / on 時,就把他從 Tab 列表隱藏。
   # 通常填隱身佔位符,例如 "%hippostaff_vanished%"。留空 = 不隱藏任何人。
   hide-player-if: ""

@@ -107,6 +107,7 @@ public final class Core extends JavaPlugin {
             }
             this.nickRepository = createRepository();
             this.nickManager = new NickManager(this, nickRepository, rankService, nametagService);
+            net.mwtw.hippoTab.api.HippoTabApi.bindNick(nickManager);
             this.nickHistory = new NickHistoryService(this, discordLog, mariaDataSource());
             this.nickManager.setHistory(nickHistory);
             this.packetNametagService.setNickManager(nickManager);
@@ -122,7 +123,7 @@ public final class Core extends JavaPlugin {
             getServer().getPluginManager().registerEvents(nickGuiService, this);
             getServer().getPluginManager().registerEvents(realNameGuiService, this);
             getServer().getPluginManager().registerEvents(new PlayerLifecycleListener(this, nickManager, messages), this);
-            getServer().getPluginManager().registerEvents(new CommandNicknameBridgeListener(nickManager), this);
+            getServer().getPluginManager().registerEvents(new CommandNicknameBridgeListener(this, nickManager), this);
             registerPlaceholderExpansion();
             nickedActionBarService.start();
             tabPacketNameService.startIfAvailable();

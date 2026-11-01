@@ -14,6 +14,7 @@ public final class HippoTabApi {
     private static volatile TabModule module;
     private static volatile net.mwtw.hippoTab.pm.SpyService spyService;
     private static volatile net.mwtw.hippoTab.discord.DiscordLogService discordLog;
+    private static volatile net.mwtw.hippoNick.service.NickManager nickManager;
 
     private HippoTabApi() {
     }
@@ -21,6 +22,33 @@ public final class HippoTabApi {
     /** Called by HippoTab itself on enable/disable. */
     public static void bind(TabModule tabModule) {
         module = tabModule;
+    }
+
+    /** Called by HippoTab itself on enable/disable (null to unbind). Only bound when nick.enabled is true. */
+    public static void bindNick(net.mwtw.hippoNick.service.NickManager nick) {
+        nickManager = nick;
+    }
+
+    /**
+     * The name other plugins should SHOW for this player right now — the nickname while
+     * nicked, otherwise their real name. Other plugins must use this instead of
+     * {@link Player#getName()}: setting a nick rewrites what the client is told (tab list,
+     * overhead nametag, chat), but does not change what {@code getName()} returns on this
+     * Paper version — that call always returns the real login name, nicked or not.
+     *
+     * <p>Falls back to {@code player.getName()} when the nick module is off (nick.enabled=false)
+     * or the player has no nick set.</p>
+     */
+    public static String displayNameOf(Player player) {
+        net.mwtw.hippoNick.service.NickManager current = nickManager;
+        return current == null || player == null ? (player == null ? null : player.getName())
+                : current.resolvePacketProfileName(player);
+    }
+
+    /** The nickname this player currently has set, or null when they have none / the nick module is off. */
+    public static String nicknameOf(Player player) {
+        net.mwtw.hippoNick.service.NickManager current = nickManager;
+        return current == null || player == null ? null : current.nicknameOf(player);
     }
 
     /** Called by HippoTab itself on enable/disable (null to unbind). */

@@ -8,6 +8,7 @@ import net.mwtw.hippoTab.service.BelowNameService;
 import net.mwtw.hippoTab.service.ClientNameResolver;
 import net.mwtw.hippoTab.service.ConditionParser;
 import net.mwtw.hippoTab.service.PlaceholderService;
+import net.mwtw.hippoTab.service.PlayerSuggestionService;
 import net.mwtw.hippoTab.service.RedisTabSyncService;
 import net.mwtw.hippoTab.service.SidebarScoreboardService;
 import net.mwtw.hippoTab.service.TabService;
@@ -41,6 +42,7 @@ public final class TabModule {
     private ConditionParser conditionParser;
     private RedisTabSyncService redisTabSyncService;
     private PlayerConnectionListener playerConnectionListener;
+    private PlayerSuggestionService playerSuggestionService;
 
     public TabModule(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -65,6 +67,8 @@ public final class TabModule {
         plugin.saveResource("conditional-placeholders.yml", false);
         placeholderService = new PlaceholderService(plugin);
         conditionParser = new ConditionParser(placeholderService);
+        playerSuggestionService = new PlayerSuggestionService(plugin);
+        playerSuggestionService.start();
         reload();
     }
 
@@ -122,6 +126,9 @@ public final class TabModule {
         }
         if (redisTabSyncService != null) {
             redisTabSyncService.stop();
+        }
+        if (playerSuggestionService != null) {
+            playerSuggestionService.stop();
         }
         if (placeholderService != null) {
             placeholderService.unregister();
